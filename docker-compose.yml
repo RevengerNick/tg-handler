@@ -5,7 +5,6 @@ services:
     build: .
     container_name: gemini_userbot
     restart: unless-stopped
-    # Ограничения ресурсов (опционально, полезно для RPi)
     deploy:
       resources:
         limits:
