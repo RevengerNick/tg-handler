@@ -549,6 +549,7 @@ def register_handlers(app: Client):
             "• `.syschat -` — Удалить инструкцию чата\n\n"
 
             "🛠 **Инструменты:**\n"
+            "• `.cal` [выражение] — Калькулятор (2+2*2)\n"
             "• `.dl` [1/2] [ссылка] — Скачать (2=mp3, 1=low, 0=best)\n"
             "• `.olx` [запрос] — Парсинг OLX в Excel (с фото)\n"
             "• `.cur` [100] [USD] — Конвертер валют\n"
@@ -607,6 +608,45 @@ def register_handlers(app: Client):
             await status.edit(f"🧠 **Gemini ({m_name}):**\n📄 **Статья:**\n👉 {link}")
         except Exception as e:
             await edit_or_reply(message, f"Err: {e}")
+
+    @app.on_message(filters.command(["cal", "кал", "calc", "счет"], prefixes="."))
+    async def calc_handler(client, message):
+        try:
+            # Получаем выражение
+            args = message.text.split(maxsplit=1)
+            if len(args) < 2:
+                return await edit_or_reply(message, "🔢 Введите выражение: `.cal 2+2`")
+
+            # Убираем пробелы и заменяем некоторые знаки для удобства
+            expr = args[1].lower().replace(" ", "")
+            expr = expr.replace("х", "*").replace("x", "*")  # Русская и англ Х на умножение
+            expr = expr.replace("^", "**")  # Степень
+            expr = expr.replace(":", "/")  # Деление
+            expr = expr.replace(",", ".")  # Запятая на точку
+
+            # БЕЗОПАСНОСТЬ: Разрешаем только цифры и мат. знаки
+            allowed_chars = set("0123456789.+-*/()%**")
+            if not set(expr).issubset(allowed_chars):
+                return await edit_or_reply(message, "❌ Ошибка: Недопустимые символы.")
+
+            # Считаем
+            # eval безопасен здесь, так как мы проверили символы выше
+            result = eval(expr, {"__builtins__": None}, {})
+
+            # Форматируем (убираем .0 если число целое)
+            if isinstance(result, (int, float)):
+                if int(result) == result:
+                    result = int(result)
+                # Округляем до 4 знаков, если дробь длинная
+                else:
+                    result = round(result, 4)
+
+            await edit_or_reply(message, f"🔢 **{args[1]}** = `{result}`")
+
+        except ZeroDivisionError:
+            await edit_or_reply(message, "❌ Деление на ноль!")
+        except Exception as e:
+            await edit_or_reply(message, f"❌ Ошибка: {e}")
 
     @app.on_message(filters.command(["cur", "кон"], prefixes="."))
     async def cur_handler(client, message):
