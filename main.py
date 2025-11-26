@@ -553,6 +553,7 @@ def register_handlers(app: Client):
             "• `.dl` [1/2] [ссылка] — Скачать (2=mp3, 1=low, 0=best)\n"
             "• `.olx` [запрос] — Парсинг OLX в Excel (с фото)\n"
             "• `.cur` [100] [USD] — Конвертер валют\n"
+            "• `.с` [текст] — Удаление пробелов\n"
             "• `.sys` — Статус сервера (RPi)\n\n"
 
             "🤡 **Fun & Spam:**\n"
@@ -563,6 +564,24 @@ def register_handlers(app: Client):
             "• `.shrek`, `.girl`, `.assgirl` — ASCII арты"
         )
         await edit_or_reply(message, text)
+
+    @app.on_message(filters.command(["s", "c", "с"], prefixes="."))
+    async def strip_handler(client, message):
+        try:
+            # Делим сообщение на ["команда", "остальной_текст"]
+            parts = message.text.split(maxsplit=1)
+
+            if len(parts) < 2:
+                # Если текста нет, можно ничего не делать или удалить сообщение
+                return
+
+            # Берем текст и удаляем ВСЕ пробелы
+            clean_text = parts[1].replace(" ", "")
+
+            # Редактируем
+            await message.edit(clean_text)
+        except Exception as e:
+            await message.edit(f"Err: {e}")
 
     @app.on_message(filters.command(["ai", "аи"], prefixes="."))
     async def ai_handler(client, message):
@@ -893,23 +912,7 @@ def register_handlers(app: Client):
         info = await get_sys_info()
         await message.edit(info)
 
-    @app.on_message(filters.me & filters.command(["s", "c", "с"], prefixes="."))
-    async def strip_handler(client, message):
-        try:
-            # Делим сообщение на ["команда", "остальной_текст"]
-            parts = message.text.split(maxsplit=1)
 
-            if len(parts) < 2:
-                # Если текста нет, можно ничего не делать или удалить сообщение
-                return
-
-            # Берем текст и удаляем ВСЕ пробелы
-            clean_text = parts[1].replace(" ", "")
-
-            # Редактируем
-            await message.edit(clean_text)
-        except Exception as e:
-            await message.edit(f"Err: {e}")
 
     # 8. SPAM
     @app.on_message(filters.me & filters.command(["spam", "спам"], prefixes="."))
