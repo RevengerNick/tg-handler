@@ -894,7 +894,7 @@ def register_handlers(app: Client):
         await message.edit(info)
 
     @app.on_message(filters.me & filters.command(["s", "c", "с"], prefixes="."))
-    async def sys_handler(client, message):
+    async def strip_handler(client, message):
         await message.edit(message.strip())
 
     # 8. SPAM
