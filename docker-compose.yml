@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  userbot:
+    build: .
+    container_name: gemini_userbot
+    restart: unless-stopped
+    # Ограничения ресурсов (опционально, полезно для RPi)
+    deploy:
+      resources:
+        limits:
+          cpus: '1.50'
+          memory: 1G
+    volumes:
+      - ./sessions:/app/sessions         # Сохраняем авторизацию
+      - ./settings.json:/app/settings.json # Сохраняем настройки (модель, инструкции)
+      - ./.env:/app/.env                 # Прокидываем ключи
+    # Эти параметры нужны для интерактивного ввода кода при первом входе!
+    stdin_open: true
+    tty: true
