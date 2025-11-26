@@ -895,8 +895,21 @@ def register_handlers(app: Client):
 
     @app.on_message(filters.me & filters.command(["s", "c", "с"], prefixes="."))
     async def strip_handler(client, message):
+        try:
+            # Делим сообщение на ["команда", "остальной_текст"]
+            parts = message.text.split(maxsplit=1)
 
-        await message.edit(message.text.replace(" ", ""))
+            if len(parts) < 2:
+                # Если текста нет, можно ничего не делать или удалить сообщение
+                return
+
+            # Берем текст и удаляем ВСЕ пробелы
+            clean_text = parts[1].replace(" ", "")
+
+            # Редактируем
+            await message.edit(clean_text)
+        except Exception as e:
+            await message.edit(f"Err: {e}")
 
     # 8. SPAM
     @app.on_message(filters.me & filters.command(["spam", "спам"], prefixes="."))
