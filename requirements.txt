@@ -1,0 +1,15 @@
+pyrogram
+tgcrypto
+google-genai
+python-dotenv
+aiohttp
+yt-dlp
+yandex-music
+selenium
+pillow
+beautifulsoup4
+lxml
+openpyxl
+psutil
+telegraph
+markdown
