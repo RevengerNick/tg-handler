@@ -13,3 +13,4 @@ openpyxl
 psutil
 telegraph
 markdown
+requests
