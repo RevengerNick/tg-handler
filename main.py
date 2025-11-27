@@ -111,28 +111,40 @@ ym_client = YMClient(YANDEX_TOKEN).init() if YANDEX_TOKEN else None
 async def create_telegraph_page(title, markdown_text):
     """
     Конвертирует Markdown в HTML и загружает статью на Telegra.ph.
-    Возвращает ссылку.
+    С механизмом повторных попыток (Retries).
     """
 
     def _sync_upload():
+        # 1. Конвертация (делаем один раз)
         try:
-            # 1. Конвертируем ответ Gemini (Markdown) в HTML
-            # extensions=['fenced_code'] нужен для красивых блоков кода
             html_content = markdown.markdown(markdown_text, extensions=['fenced_code', 'tables'])
-
-            # 2. Немного магии: Telegraph API не любит чистый HTML, ему нужны параграфы
-            # Простейший хак: заменяем переносы строк на <br> если их нет
             html_content = html_content.replace("\n", "<br>")
-
-            # 3. Загружаем
-            response = telegraph_client.create_page(
-                title=title,
-                html_content=html_content,
-                author_name="Gemini Userbot"
-            )
-            return response['url']
         except Exception as e:
-            return f"Error Telegraph: {e}"
+            return f"Error Markdown Conversion: {e}"
+
+        # 2. Попытки отправки (Retry Loop)
+        max_retries = 3
+        last_error = None
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                # Пытаемся создать страницу
+                response = telegraph_client.create_page(
+                    title=title,
+                    html_content=html_content,
+                    author_name="Gemini Userbot"
+                )
+                return response['url']  # Успех!
+
+            except Exception as e:
+                print(f"⚠️ Telegraph attempt {attempt} failed: {e}")
+                last_error = e
+                # Если это не последняя попытка, ждем 2 секунды
+                if attempt < max_retries:
+                    time.sleep(2)
+
+        # Если все попытки провалились
+        return f"Error Telegraph (gave up after {max_retries} tries): {last_error}"
 
     return await asyncio.to_thread(_sync_upload)
 
