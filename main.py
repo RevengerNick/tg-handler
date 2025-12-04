@@ -45,14 +45,43 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 AVAILABLE_VOICES = {
-    "1": "Puck",    # Мужской, энергичный
-    "2": "Charon",  # Мужской, глубокий
-    "3": "Kore",    # Женский, спокойный
-    "4": "Fenrir",  # Мужской, басистый
-    "5": "Aoede",   # Женский, высокий
-    "6": "Zephyr"   # Женский, мягкий
+    "1": "Zephyr",        # Bright, Higher pitch
+    "2": "Puck",          # Upbeat, Middle pitch
+    "3": "Charon",        # Informative, Lower pitch
+    "4": "Kore",          # Firm, Middle pitch
+    "5": "Fenrir",        # Excitable, Lower middle pitch
+    "6": "Leda",          # Youthful, Higher pitch
+    "7": "Orus",          # Firm, Lower middle pitch
+    "8": "Aoede",         # Breezy, Middle pitch
+    "9": "Callirrhoe",    # Easy-going, Middle pitch
+    "10": "Autonoe",      # Bright, Middle pitch
+    "11": "Enceladus",    # Breathy, Lower pitch
+    "12": "Iapetus",      # Clear, Lower middle pitch
+    "13": "Umbriel",      # Easy-going, Lower middle pitch
+    "14": "Algieba",      # Smooth, Lower pitch
+    "15": "Despina",      # Smooth, Middle pitch
+    "16": "Erinome",      # Clear, Middle pitch
+    "17": "Algenib",      # Gravelly, Lower pitch
+    "18": "Rasalgethi",   # Informative, Middle pitch
+    "19": "Laomedeia",    # Upbeat, Higher pitch
+    "20": "Achernar",     # Soft, Higher pitch
+    "21": "Alnilam",      # Firm, Lower middle pitch
+    "22": "Schedar",      # Even, Lower middle pitch
+    "23": "Gacrux",       # Mature, Middle pitch
+    "24": "Pulcherrima",  # Forward, Middle pitch
+    "25": "Achird",       # Friendly, Lower middle pitch
+    "26": "Zubenelgenubi",# Casual, Lower middle pitch
+    "27": "Vindemiatrix", # Gentle, Middle pitch
+    "28": "Sadachbia",    # Lively, Lower pitch
+    "29": "Sadaltager",   # Knowledgeable, Middle pitch
+    "30": "Sulafat"       # Warm, Middle pitch
 }
 
+# Обновленный список для диалогов (чередуем разные тембры для контраста)
+VOICE_NAMES_LIST = [
+    "Puck", "Zephyr", "Fenrir", "Leda", "Charon", "Aoede",
+    "Orus", "Autonoe", "Algenib", "Erinome", "Enceladus", "Kore"
+]
 AVAILABLE_TTS_MODELS = {
     "1": "gemini-2.5-pro-preview-tts", # PRO (Лучшее качество)
     "2": "gemini-2.5-flash-preview-tts",           # FLASH (Быстрее)
@@ -67,9 +96,6 @@ GEMINI_KEY = os.getenv("GEMINI_API_KEY")
 YANDEX_TOKEN = os.getenv("YANDEX_TOKEN")
 EXCHANGE_KEY = os.getenv("EXCHANGE_API_KEY")
 SETTINGS_FILE = "settings.json"
-
-# Puck(M), Aoede(F), Charon(M), Kore(F), Fenrir(M), Zephyr(F)
-VOICE_NAMES_LIST = ["Puck", "Aoede", "Charon", "Kore", "Fenrir", "Zephyr"]
 
 AVAILABLE_MODELS = {
     "1": {"id": "gemini-2.5-flash", "name": "⚡️ 2.5 Flash (Google Search)", "search": True},
