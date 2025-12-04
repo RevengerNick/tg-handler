@@ -45,36 +45,39 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 AVAILABLE_VOICES = {
-    "1": "Zephyr",        # Bright, Higher pitch
-    "2": "Puck",          # Upbeat, Middle pitch
-    "3": "Charon",        # Informative, Lower pitch
-    "4": "Kore",          # Firm, Middle pitch
-    "5": "Fenrir",        # Excitable, Lower middle pitch
-    "6": "Leda",          # Youthful, Higher pitch
-    "7": "Orus",          # Firm, Lower middle pitch
-    "8": "Aoede",         # Breezy, Middle pitch
-    "9": "Callirrhoe",    # Easy-going, Middle pitch
-    "10": "Autonoe",      # Bright, Middle pitch
-    "11": "Enceladus",    # Breathy, Lower pitch
-    "12": "Iapetus",      # Clear, Lower middle pitch
-    "13": "Umbriel",      # Easy-going, Lower middle pitch
-    "14": "Algieba",      # Smooth, Lower pitch
-    "15": "Despina",      # Smooth, Middle pitch
-    "16": "Erinome",      # Clear, Middle pitch
-    "17": "Algenib",      # Gravelly, Lower pitch
-    "18": "Rasalgethi",   # Informative, Middle pitch
-    "19": "Laomedeia",    # Upbeat, Higher pitch
-    "20": "Achernar",     # Soft, Higher pitch
-    "21": "Alnilam",      # Firm, Lower middle pitch
-    "22": "Schedar",      # Even, Lower middle pitch
-    "23": "Gacrux",       # Mature, Middle pitch
-    "24": "Pulcherrima",  # Forward, Middle pitch
-    "25": "Achird",       # Friendly, Lower middle pitch
-    "26": "Zubenelgenubi",# Casual, Lower middle pitch
-    "27": "Vindemiatrix", # Gentle, Middle pitch
-    "28": "Sadachbia",    # Lively, Lower pitch
-    "29": "Sadaltager",   # Knowledgeable, Middle pitch
-    "30": "Sulafat"       # Warm, Middle pitch
+    # --- Мужские ---
+    "1": {"name": "Puck", "gender": "M", "desc": "Бодрый, средний тон"},
+    "2": {"name": "Charon", "gender": "M", "desc": "Глубокий, низкий"},
+    "3": {"name": "Fenrir", "gender": "M", "desc": "Басистый, энергичный"},
+    "4": {"name": "Orus", "gender": "M", "desc": "Твердый, ниже среднего"},
+    "5": {"name": "Enceladus", "gender": "M", "desc": "С придыханием, низкий"},
+    "6": {"name": "Iapetus", "gender": "M", "desc": "Чистый, ниже среднего"},
+    "7": {"name": "Umbriel", "gender": "M", "desc": "Спокойный, ниже среднего"},
+    "8": {"name": "Algieba", "gender": "M", "desc": "Гладкий, низкий"},
+    "9": {"name": "Algenib", "gender": "M", "desc": "Хриплый, низкий"},
+    "10": {"name": "Achernar", "gender": "M", "desc": "Мягкий, высокий"},
+    "11": {"name": "Alnilam", "gender": "M", "desc": "Твердый, ниже среднего"},
+    "12": {"name": "Schedar", "gender": "M", "desc": "Ровный, ниже среднего"},
+    "13": {"name": "Zubenelgenubi", "gender": "M", "desc": "Небрежный, ниже среднего"},
+
+    # --- Женские ---
+    "14": {"name": "Zephyr", "gender": "F", "desc": "Светлый, высокий"},
+    "15": {"name": "Kore", "gender": "F", "desc": "Твердый, средний"},
+    "16": {"name": "Leda", "gender": "F", "desc": "Молодой, высокий"},
+    "17": {"name": "Aoede", "gender": "F", "desc": "Легкий, средний"},
+    "18": {"name": "Callirrhoe", "gender": "F", "desc": "Беззаботный, средний"},
+    "19": {"name": "Autonoe", "gender": "F", "desc": "Яркий, средний"},
+    "20": {"name": "Despina", "gender": "F", "desc": "Гладкий, средний"},
+    "21": {"name": "Erinome", "gender": "F", "desc": "Чистый, средний"},
+    "22": {"name": "Rasalgethi", "gender": "F", "desc": "Информативный, средний"},
+    "23": {"name": "Laomedeia", "gender": "F", "desc": "Бодрый, высокий"},
+    "24": {"name": "Gacrux", "gender": "F", "desc": "Зрелый, средний"},
+    "25": {"name": "Pulcherrima", "gender": "F", "desc": "Прямолинейный, средний"},
+    "26": {"name": "Achird", "gender": "F", "desc": "Дружелюбный, ниже среднего"},
+    "27": {"name": "Vindemiatrix", "gender": "F", "desc": "Нежный, средний"},
+    "28": {"name": "Sadachbia", "gender": "F", "desc": "Живой, низкий"},
+    "29": {"name": "Sadaltager", "gender": "F", "desc": "Знающий, средний"},
+    "30": {"name": "Sulafat", "gender": "F", "desc": "Теплый, средний"}
 }
 
 # Обновленный список для диалогов (чередуем разные тембры для контраста)
@@ -641,7 +644,9 @@ async def generate_gemini_tts(text):
     model_id = AVAILABLE_TTS_MODELS.get(tts_model_key, "gemini-2.5-pro-preview-tts")
 
     voice_key = SETTINGS.get("voice_key", "1")
-    voice_name = AVAILABLE_VOICES.get(voice_key, "Puck")
+    # Берем ["name"] из словаря
+    voice_data = AVAILABLE_VOICES.get(voice_key, AVAILABLE_VOICES["1"])
+    voice_name = voice_data["name"]
 
     # Конфиг для аудио
     config = types.GenerateContentConfig(
@@ -1123,7 +1128,8 @@ def register_handlers(app: Client):
 
             if len(final_text) > 4000: final_text = final_text[:4000]
 
-            v_name = AVAILABLE_VOICES[SETTINGS.get("voice_key", "1")]
+            v_key = SETTINGS.get("voice_key", "1")
+            v_name = AVAILABLE_VOICES.get(v_key, AVAILABLE_VOICES["1"])["name"]
             status = await edit_or_reply(message, f"🗣 Gemini ({v_name}) генерирует...")
 
             # 1. Генерируем WAV (исходник)
@@ -1171,23 +1177,37 @@ def register_handlers(app: Client):
     @app.on_message(filters.me & filters.command(["voice", "голос"], prefixes="."))
     async def voice_select_handler(client, message):
         args = message.text.split()
-        curr = SETTINGS.get("voice_key", "1")
+        curr_key = SETTINGS.get("voice_key", "1")
 
         if len(args) < 2:
-            text = "🗣 **Голоса (Gemini):**\n\n"
+            # Формируем списки
+            male_list = []
+            female_list = []
+
             for k, v in AVAILABLE_VOICES.items():
-                mark = "✅" if k == curr else ""
-                text += f"`{k}` — {v} {mark}\n"
-            text += "\n`.voice 2`"
+                mark = "✅" if k == curr_key else ""
+                line = f"`{k}` — **{v['name']}** ({v['desc']}) {mark}"
+
+                if v["gender"] == "M":
+                    male_list.append(line)
+                else:
+                    female_list.append(line)
+
+            text = "🗣 **Голоса (Gemini):**\n\n"
+            text += "👨 **МУЖСКИЕ:**\n" + "\n".join(male_list) + "\n\n"
+            text += "👩 **ЖЕНСКИЕ:**\n" + "\n".join(female_list)
+
+            text += "\n\nВыбор: `.voice 5`"
             return await message.edit(text)
 
-        c = args[1]
-        if c in AVAILABLE_VOICES:
-            SETTINGS["voice_key"] = c;
+        choice = args[1]
+        if choice in AVAILABLE_VOICES:
+            SETTINGS["voice_key"] = choice
             save_settings()
-            await message.edit(f"✅ Голос: `{AVAILABLE_VOICES[c]}`")
+            info = AVAILABLE_VOICES[choice]
+            await message.edit(f"✅ Голос установлен: `{info['name']}`\n({info['desc']})")
         else:
-            await message.edit("❌ Неверно.")
+            await message.edit("❌ Неверный номер.")
 
     # 3. TTS MODEL SELECTION (PRO / FLASH)
     @app.on_message(filters.me & filters.command(["ttsmodel", "модельозвучки"], prefixes="."))
