@@ -5,6 +5,8 @@ import re
 import time
 import json
 import psutil
+import struct # Для создания WAV заголовков
+import mimetypes
 from io import BytesIO
 from datetime import datetime
 
@@ -42,6 +44,19 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+AVAILABLE_VOICES = {
+    "1": "Puck",    # Мужской, энергичный
+    "2": "Charon",  # Мужской, глубокий
+    "3": "Kore",    # Женский, спокойный
+    "4": "Fenrir",  # Мужской, басистый
+    "5": "Aoede",   # Женский, высокий
+    "6": "Zephyr"   # Женский, мягкий
+}
+
+AVAILABLE_TTS_MODELS = {
+    "1": "gemini-2.5-pro-preview-tts", # PRO (Лучшее качество)
+    "2": "gemini-2.5-flash-preview-tts",           # FLASH (Быстрее)
+}
 load_dotenv()
 
 # --- CONFIGURATION ---
@@ -64,11 +79,12 @@ AVAILABLE_MODELS = {
 ASYNC_CHAT_SESSIONS = {}
 
 SETTINGS = {
-    "model_key": "1",
+    "model_key": "1",      # Текстовая модель
+    "voice_key": "1",      # Голос (Puck по дефолту)
+    "tts_model_key": "1",  # Модель озвучки (Pro по дефолту)
     "sys_global": "",
     "sys_chats": {}
 }
-
 # Telegraph Init
 telegraph_client = Telegraph()
 try:
@@ -104,9 +120,82 @@ if GEMINI_KEY:
 
 ym_client = YMClient(YANDEX_TOKEN).init() if YANDEX_TOKEN else None
 
-
 # --- HELPER FUNCTIONS ---
 
+async def add_stress_via_gemini(text):
+    """
+    Просит Gemini расставить ударения для TTS.
+    """
+    if not ai_client: return text
+
+    # Промпт жесткий, чтобы он вернул ТОЛЬКО текст без "Конечно, вот текст:"
+    prompt = (
+        "Расставь ударения в этом тексте, используя символ '́' (U+0301) ПОСЛЕ ударной гласной. "
+        "Исправляй омографы по контексту. "
+        "Верни ТОЛЬКО обработанный текст, без кавычек и вступлений.\n"
+        f"Текст: {text}"
+    )
+
+    try:
+        # Используем быстрый Flash для скорости
+        model_id = "gemini-2.5-pro"
+        response = await ai_client.aio.models.generate_content(
+            model=model_id,
+            contents=prompt
+        )
+        result = response.text.strip()
+        return result
+    except Exception as e:
+        print(f"Stress Error: {e}")
+        return text  # Если ошибка, возвращаем оригинал
+
+
+def parse_audio_mime_type(mime_type: str):
+    """Парсит частоту дискретизации и битность из MIME-типа."""
+    bits_per_sample = 16
+    rate = 24000
+    parts = mime_type.split(";")
+    for param in parts:
+        param = param.strip()
+        if param.lower().startswith("rate="):
+            try:
+                rate = int(param.split("=", 1)[1])
+            except:
+                pass
+        elif param.startswith("audio/L"):
+            try:
+                bits_per_sample = int(param.split("L", 1)[1])
+            except:
+                pass
+    return {"bits_per_sample": bits_per_sample, "rate": rate}
+
+
+def convert_to_wav(audio_data: bytes, mime_type: str) -> bytes:
+    """Добавляет WAV заголовок к сырым PCM данным."""
+    params = parse_audio_mime_type(mime_type)
+    channels = 1
+    data_size = len(audio_data)
+    byte_rate = params["rate"] * channels * (params["bits_per_sample"] // 8)
+    block_align = channels * (params["bits_per_sample"] // 8)
+
+    # WAV Header (44 bytes)
+    header = struct.pack(
+        "<4sI4s4sIHHIIHH4sI",
+        b"RIFF",
+        36 + data_size,
+        b"WAVE",
+        b"fmt ",
+        16,
+        1,
+        channels,
+        params["rate"],
+        byte_rate,
+        block_align,
+        params["bits_per_sample"],
+        b"data",
+        data_size
+    )
+    return header + audio_data
 
 async def create_telegraph_page(title, markdown_text):
     """
@@ -147,6 +236,41 @@ async def create_telegraph_page(title, markdown_text):
         return f"Error Telegraph (gave up after {max_retries} tries): {last_error}"
 
     return await asyncio.to_thread(_sync_upload)
+
+
+async def convert_wav_to_ogg(wav_path):
+    """
+    Конвертирует WAV в OGG Opus (формат голосовых Telegram) используя ffmpeg.
+    """
+    ogg_path = wav_path.replace(".wav", ".ogg")
+
+    # Команда для ffmpeg:
+    # -c:a libopus : кодек Opus
+    # -b:a 32k     : битрейт (стандарт для голосовых)
+    # -vn          : убрать видео (на всякий случай)
+    # -y           : перезаписать, если есть
+    cmd = [
+        "ffmpeg", "-i", wav_path,
+        "-c:a", "libopus", "-b:a", "32k", "-vn", "-y",
+        ogg_path
+    ]
+
+    try:
+        # Запускаем процесс асинхронно, чтобы не блокировать бота
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.DEVNULL,  # Скрываем лишний вывод
+            stderr=asyncio.subprocess.DEVNULL
+        )
+        await process.communicate()  # Ждем завершения
+
+        if os.path.exists(ogg_path):
+            return ogg_path
+        return None
+    except Exception as e:
+        print(f"FFmpeg Error: {e}")
+        return None
+
 
 def smart_split(text, limit=4000):
     """
@@ -291,6 +415,62 @@ async def ask_gemini_chat(chat_id, contents):
         return f"Chat Error: {e}"
 
 
+async def generate_gemini_tts(text):
+    """Генерация голоса через Google Gemini"""
+    if not ai_client: return None
+
+    # Получаем настройки
+    tts_model_key = SETTINGS.get("tts_model_key", "1")
+    model_id = AVAILABLE_TTS_MODELS.get(tts_model_key, "gemini-2.5-pro-preview-tts")
+
+    voice_key = SETTINGS.get("voice_key", "1")
+    voice_name = AVAILABLE_VOICES.get(voice_key, "Puck")
+
+    # Конфиг для аудио
+    config = types.GenerateContentConfig(
+        response_modalities=["audio"],
+        speech_config=types.SpeechConfig(
+            voice_config=types.VoiceConfig(
+                prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                    voice_name=voice_name
+                )
+            )
+        )
+    )
+
+    accumulated_data = bytearray()
+    mime_type = "audio/wav"  # Фолбэк
+
+    try:
+        # Используем AIO (асинхронный) клиент
+        async for chunk in await ai_client.aio.models.generate_content_stream(
+                model=model_id,
+                contents=text,
+                config=config
+        ):
+            if chunk.candidates and chunk.candidates[0].content.parts:
+                part = chunk.candidates[0].content.parts[0]
+                if part.inline_data:
+                    accumulated_data.extend(part.inline_data.data)
+                    mime_type = part.inline_data.mime_type
+
+        if not accumulated_data:
+            return None
+
+        # Конвертируем сырой PCM в WAV (добавляем заголовок)
+        final_wav = convert_to_wav(bytes(accumulated_data), mime_type)
+
+        filename = f"gemini_voice_{int(time.time())}.wav"
+        with open(filename, "wb") as f:
+            f.write(final_wav)
+
+        return filename
+
+    except Exception as e:
+        print(f"Gemini TTS Error: {e}")
+        return None
+
+
 async def get_sys_info():
     """Получение инфо о системе (для RPi)"""
     try:
@@ -318,6 +498,104 @@ async def get_sys_info():
     except Exception as e:
         return f"Sys info error: {e}"
 
+
+async def generate_freetts(text):
+    """
+    Генерация голоса через FreeTTS.ru
+    Используем ПОЛНУЮ эмуляцию браузера Firefox (Headers + Cookie).
+    """
+    url_synth = "https://freetts.ru/api/synthesis"
+    url_history = "https://freetts.ru/api/history"
+
+    # Твой UID (должен быть свежим из браузера)
+    current_uid = "710a7bacbccdad2f8207f2b3a7f921d0"
+    voice_id = "NG6FIoMMe4L1"
+
+    # Полная копия твоих хедеров из Firefox
+    headers = {
+        "Host": "freetts.ru",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:145.0) Gecko/20100101 Firefox/145.0",
+        "Accept": "*/*",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Accept-Encoding": "gzip, deflate, br, zstd",
+        "Referer": "https://freetts.ru/",
+        "Origin": "https://freetts.ru",  # Важно для POST запросов
+        "DNT": "1",
+        "Sec-GPC": "1",
+        "Connection": "keep-alive",
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-origin",
+        "Priority": "u=4",
+        # Content-Type aiohttp добавит сам
+    }
+
+    # Куки передаем отдельно, aiohttp их правильно отформатирует
+    cookies = {"uid": current_uid}
+
+    try:
+        async with aiohttp.ClientSession(headers=headers, cookies=cookies) as session:
+            # 1. Отправляем запрос на озвучку (POST)
+            payload = {
+                "text": text,
+                "voiceid": voice_id,
+                "ext": "mp3"
+            }
+
+            async with session.post(url_synth, json=payload) as resp:
+                resp_text = await resp.text()
+
+                # Если 666 или другая ошибка
+                if resp.status != 200:
+                    print(f"DEBUG FreeTTS POST Fail: {resp.status} | {resp_text}")
+                    return None, f"HTTP Error: {resp.status}"
+
+                try:
+                    data = json.loads(resp_text)
+                    # "data": false часто приходит при ошибке 666
+                    if data.get("status") == "error":
+                        print(f"DEBUG FreeTTS 666/Error: {data}")
+                        return None, f"Anti-Bot Error: {data.get('message')}"
+                except:
+                    pass
+
+            # 2. Ждем и опрашиваем историю (GET)
+            for i in range(15):
+                await asyncio.sleep(2)
+
+                async with session.get(url_history) as hist_resp:
+                    if hist_resp.status != 200:
+                        print(f"DEBUG History Fail: {hist_resp.status}")
+                        continue
+
+                    hist_data = await hist_resp.json()
+
+                    if hist_data.get("status") == "success" and isinstance(hist_data.get("data"), list):
+                        # Ищем задачу (первые 5 записей)
+                        for task in hist_data["data"][:5]:
+                            # Сравниваем начало текста
+                            # text[:15] может не совпасть, если там спецсимволы, пробуем мягкий поиск
+                            if text[:10] in task.get("text", ""):
+
+                                if task["status"] == "done":
+                                    audio_url = task["url"]
+                                    # 3. Скачиваем
+                                    async with session.get(audio_url) as audio_resp:
+                                        if audio_resp.status == 200:
+                                            content = await audio_resp.read()
+                                            filename = f"freetts_{int(time.time())}.mp3"
+                                            with open(filename, "wb") as f:
+                                                f.write(content)
+                                            return filename, None
+
+                                elif task["status"] == "error":
+                                    return None, "Server Error inside history"
+
+            return None, "Timeout (не найдено в истории)"
+
+    except Exception as e:
+        print(f"DEBUG FreeTTS Exception: {e}")
+        return None, str(e)
 
 async def download_yandex_track(url: str):
     def _sync_download():
@@ -567,6 +845,13 @@ def register_handlers(app: Client):
             "• `.cur` [100] [USD] — Конвертер валют\n"
             "• `.с` [текст] — Удаление пробелов\n"
             "• `.sys` — Статус сервера (RPi)\n\n"
+                
+            "🔊 **Звук:**\n"
+            "• `.say` [текст] — Голосовое сообщение (OGG)\n"
+            "• `.saywav` [текст] — Аудиофайл (WAV)\n"
+            "• `.voice` [1-6] — Выбрать голос\n"
+            "• `.ttsmodel` [1-2] — Выбрать движок\n"
+            "• `.sayfree` — FreeTTS (Резерв)\n\n"
 
             "🤡 **Fun & Spam:**\n"
             "• `.sar` [текст] — СдЕлАтЬ сАрКаЗм\n"
@@ -595,6 +880,117 @@ def register_handlers(app: Client):
             await message.edit(clean_text)
         except Exception as e:
             await message.edit(f"Err: {e}")
+
+    @app.on_message(filters.command(["say", "скажи", "saywav", "sayfile"], prefixes="."))
+    async def say_handler(client, message):
+        try:
+            # Определяем тип отправки по команде
+            cmd = message.command[0].lower()
+            send_as_file = "wav" in cmd or "file" in cmd
+
+            parts = message.text.split(maxsplit=1)
+            user_text = parts[1] if len(parts) > 1 else ""
+
+            # Реплай логика
+            reply_text, _ = await get_message_context(client, message)
+            if reply_text:
+                clean_reply = reply_text.replace("--- Начало пересылаемого сообщения ---\n", "").replace(
+                    "\n--- Конец пересылаемого сообщения ---\n\n", "")
+                final_text = clean_reply
+            else:
+                final_text = user_text
+
+            if not final_text:
+                return await edit_or_reply(message, "🗣 Текст?")
+
+            if len(final_text) > 4000: final_text = final_text[:4000]
+
+            v_name = AVAILABLE_VOICES[SETTINGS.get("voice_key", "1")]
+            status = await edit_or_reply(message, f"🗣 Gemini ({v_name}) генерирует...")
+
+            # 1. Генерируем WAV (исходник)
+            wav_path = await generate_gemini_tts(final_text)
+
+            if wav_path and os.path.exists(wav_path):
+                await status.edit("🗣 Отправка...")
+
+                if send_as_file:
+                    # --- ВАРИАНТ ФАЙЛ (WAV) ---
+                    await client.send_audio(
+                        chat_id=message.chat.id,
+                        audio=wav_path,
+                        performer=f"Gemini {v_name}",
+                        title="TTS Audio",
+                        caption=f"🗣 **Gemini WAV** ({v_name})"
+                    )
+                    os.remove(wav_path)
+                else:
+                    # --- ВАРИАНТ ГОЛОСОВОЕ (OGG) ---
+                    # Сначала конвертируем
+                    ogg_path = await convert_wav_to_ogg(wav_path)
+
+                    if ogg_path:
+                        await client.send_voice(
+                            chat_id=message.chat.id,
+                            voice=ogg_path,
+                            caption=f"🗣 **Gemini Voice** ({v_name})"
+                        )
+                        os.remove(ogg_path)  # Удаляем OGG
+                    else:
+                        await status.edit("❌ Ошибка конвертации в OGG.")
+
+                    os.remove(wav_path)  # Удаляем исходный WAV
+
+                if message.outgoing: await message.delete()
+                if status != message: await status.delete()
+            else:
+                await status.edit("❌ Ошибка TTS.")
+
+        except Exception as e:
+            await edit_or_reply(message, f"Err: {e}")
+
+    # 2. VOICE SELECTION
+    @app.on_message(filters.me & filters.command(["voice", "голос"], prefixes="."))
+    async def voice_select_handler(client, message):
+        args = message.text.split()
+        curr = SETTINGS.get("voice_key", "1")
+
+        if len(args) < 2:
+            text = "🗣 **Голоса (Gemini):**\n\n"
+            for k, v in AVAILABLE_VOICES.items():
+                mark = "✅" if k == curr else ""
+                text += f"`{k}` — {v} {mark}\n"
+            text += "\n`.voice 2`"
+            return await message.edit(text)
+
+        c = args[1]
+        if c in AVAILABLE_VOICES:
+            SETTINGS["voice_key"] = c;
+            save_settings()
+            await message.edit(f"✅ Голос: `{AVAILABLE_VOICES[c]}`")
+        else:
+            await message.edit("❌ Неверно.")
+
+    # 3. TTS MODEL SELECTION (PRO / FLASH)
+    @app.on_message(filters.me & filters.command(["ttsmodel", "модельозвучки"], prefixes="."))
+    async def tts_model_handler(client, message):
+        args = message.text.split()
+        curr = SETTINGS.get("tts_model_key", "1")
+
+        if len(args) < 2:
+            text = "🎛 **Модель озвучки:**\n\n"
+            for k, v in AVAILABLE_TTS_MODELS.items():
+                mark = "✅" if k == curr else ""
+                text += f"`{k}` — {v} {mark}\n"
+            return await message.edit(text)
+
+        c = args[1]
+        if c in AVAILABLE_TTS_MODELS:
+            SETTINGS["tts_model_key"] = c;
+            save_settings()
+            await message.edit(f"✅ Модель TTS: `{AVAILABLE_TTS_MODELS[c]}`")
+        else:
+            await message.edit("❌ Неверно.")
 
     @app.on_message(filters.command(["ai", "аи"], prefixes="."))
     async def ai_handler(client, message):
@@ -691,7 +1087,7 @@ def register_handlers(app: Client):
             await edit_or_reply(message, "Err")
 
     # 1. AI CHAT (CONTEXT AWARE)
-    @app.on_message(filters.me & filters.command(["chat", "чат"], prefixes="."))
+    @app.on_message(filters.command(["chat", "чат"], prefixes="."))
     async def chat_handler(client, message):
         try:
             parts = message.text.split(maxsplit=1)
@@ -707,7 +1103,7 @@ def register_handlers(app: Client):
             m_name = AVAILABLE_MODELS[SETTINGS.get("model_key", "1")]["name"]
 
             # Статус "Думаю..."
-            await message.edit(f"💬 {m_name} думает...")
+            await edit_or_reply(message, f"💬 {m_name} думает...")
 
             # Формируем полный запрос для ИИ
             final_prompt = f"{reply_txt}{prompt}"
@@ -724,14 +1120,14 @@ def register_handlers(app: Client):
             # Собираем первое сообщение
             first_msg = f"{user_header}\n\n🤖 **{m_name}:**\n{chunks[0]}"
 
-            await message.edit(first_msg, disable_web_page_preview=True)
+            await edit_or_reply(message, first_msg)
 
             # Если ответ длинный, отправляем остальные куски следом
             for c in chunks[1:]:
                 await client.send_message(message.chat.id, c, disable_web_page_preview=True)
 
         except Exception as e:
-            await message.edit(f"Err: {e}")
+            await edit_or_reply(message, f"Err: {e}")
 
     @app.on_message(filters.me & filters.command(["chatt", "чатт"], prefixes="."))
     async def chatt_handler(client, message):
