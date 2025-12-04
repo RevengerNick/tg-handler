@@ -62,13 +62,14 @@ AVAILABLE_VOICES = {
 
     # --- Женские ---
     "14": {"name": "Zephyr", "gender": "F", "desc": "Светлый, высокий"},
+    "20": {"name": "Despina", "gender": "F", "desc": "Гладкий, средний"},
+    "21": {"name": "Erinome", "gender": "F", "desc": "Чистый, средний"},
+    "30": {"name": "Sulafat", "gender": "F", "desc": "Теплый, средний"},
     "15": {"name": "Kore", "gender": "F", "desc": "Твердый, средний"},
     "16": {"name": "Leda", "gender": "F", "desc": "Молодой, высокий"},
     "17": {"name": "Aoede", "gender": "F", "desc": "Легкий, средний"},
     "18": {"name": "Callirrhoe", "gender": "F", "desc": "Беззаботный, средний"},
     "19": {"name": "Autonoe", "gender": "F", "desc": "Яркий, средний"},
-    "20": {"name": "Despina", "gender": "F", "desc": "Гладкий, средний"},
-    "21": {"name": "Erinome", "gender": "F", "desc": "Чистый, средний"},
     "22": {"name": "Rasalgethi", "gender": "F", "desc": "Информативный, средний"},
     "23": {"name": "Laomedeia", "gender": "F", "desc": "Бодрый, высокий"},
     "24": {"name": "Gacrux", "gender": "F", "desc": "Зрелый, средний"},
@@ -76,8 +77,7 @@ AVAILABLE_VOICES = {
     "26": {"name": "Achird", "gender": "F", "desc": "Дружелюбный, ниже среднего"},
     "27": {"name": "Vindemiatrix", "gender": "F", "desc": "Нежный, средний"},
     "28": {"name": "Sadachbia", "gender": "F", "desc": "Живой, низкий"},
-    "29": {"name": "Sadaltager", "gender": "F", "desc": "Знающий, средний"},
-    "30": {"name": "Sulafat", "gender": "F", "desc": "Теплый, средний"}
+    "29": {"name": "Sadaltager", "gender": "F", "desc": "Знающий, средний"}
 }
 
 # Обновленный список для диалогов (чередуем разные тембры для контраста)
