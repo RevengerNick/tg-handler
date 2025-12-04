@@ -68,6 +68,8 @@ YANDEX_TOKEN = os.getenv("YANDEX_TOKEN")
 EXCHANGE_KEY = os.getenv("EXCHANGE_API_KEY")
 SETTINGS_FILE = "settings.json"
 
+VOICE_NAMES_LIST = ["Puck", "Kore", "Fenrir", "Aoede", "Charon", "Zephyr"]
+
 AVAILABLE_MODELS = {
     "1": {"id": "gemini-2.5-flash", "name": "⚡️ 2.5 Flash (Google Search)", "search": True},
     "2": {"id": "gemini-2.5-pro", "name": "🧠 2.5 Pro (Thinking)", "search": False},
@@ -169,6 +171,86 @@ def parse_audio_mime_type(mime_type: str):
                 pass
     return {"bits_per_sample": bits_per_sample, "rate": rate}
 
+
+async def generate_multispeaker_tts(script_text):
+    """
+    Генерирует диалог с несколькими спикерами.
+    Автоматически определяет имена (Speaker: Text) и назначает голоса.
+    """
+    if not ai_client: return None
+
+    # 1. Поиск уникальных спикеров в тексте
+    # Ищем паттерны "Имя:", "Name:", "Speaker 1:" в начале строк
+    # Regex ловит слова перед двоеточием
+    speaker_pattern = re.compile(r"^([A-Za-zА-Яа-я0-9_ ]+):", re.MULTILINE)
+    found_speakers = list(set(speaker_pattern.findall(script_text)))
+
+    if not found_speakers:
+        # Если формат не "Имя: Текст", считаем это монологом одного спикера
+        found_speakers = ["Narrator"]
+        script_text = f"Narrator: {script_text}"
+
+    print(f"DEBUG: Found speakers: {found_speakers}")
+
+    # 2. Распределение ролей (Casting)
+    speaker_configs = []
+    for i, speaker_name in enumerate(found_speakers):
+        # Берем голос из списка по кругу
+        voice_name = VOICE_NAMES_LIST[i % len(VOICE_NAMES_LIST)]
+
+        speaker_configs.append(
+            types.SpeakerVoiceConfig(
+                speaker=speaker_name,
+                voice_config=types.VoiceConfig(
+                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                        voice_name=voice_name
+                    )
+                )
+            )
+        )
+
+    # 3. Конфиг генерации
+    # Используем модель 2.5 Flash или Pro Preview (они поддерживают мультиспикер)
+    model_id = "gemini-2.5-flash-preview-tts"  # Можно и Pro, но Flash быстрее для тестов
+
+    config = types.GenerateContentConfig(
+        response_modalities=["audio"],
+        speech_config=types.SpeechConfig(
+            multi_speaker_voice_config=types.MultiSpeakerVoiceConfig(
+                speaker_voice_configs=speaker_configs
+            )
+        )
+    )
+
+    # 4. Генерация
+    accumulated_data = bytearray()
+    mime_type = "audio/wav"
+
+    try:
+        # Важно: Передаем ВЕСЬ скрипт как промпт
+        async for chunk in await ai_client.aio.models.generate_content_stream(
+                model=model_id,
+                contents=script_text,
+                config=config
+        ):
+            if chunk.candidates and chunk.candidates[0].content.parts:
+                part = chunk.candidates[0].content.parts[0]
+                if part.inline_data:
+                    accumulated_data.extend(part.inline_data.data)
+                    mime_type = part.inline_data.mime_type
+
+        if not accumulated_data: return None
+
+        final_wav = convert_to_wav(bytes(accumulated_data), mime_type)
+        filename = f"dialog_{int(time.time())}.wav"
+        with open(filename, "wb") as f:
+            f.write(final_wav)
+
+        return filename
+
+    except Exception as e:
+        print(f"MultiSpeaker Error: {e}")
+        return None
 
 def convert_to_wav(audio_data: bytes, mime_type: str) -> bytes:
     """Добавляет WAV заголовок к сырым PCM данным."""
@@ -1100,6 +1182,99 @@ def register_handlers(app: Client):
 
             await status.edit(chunks[0], disable_web_page_preview=True)
             for c in chunks[1:]: await client.send_message(message.chat.id, c, disable_web_page_preview=True)
+        except Exception as e:
+            await edit_or_reply(message, f"Err: {e}")
+
+    @app.on_message(filters.command(["dialog", "диалог", "t"], prefixes="."))
+    async def dialog_handler(client, message):
+        try:
+            parts = message.text.split(maxsplit=1)
+            script = parts[1] if len(parts) > 1 else ""
+
+            # Поддержка реплая (если в реплае уже есть готовый сценарий)
+            reply_text, _ = await get_message_context(client, message)
+            if reply_text:
+                # Чистим от маркеров
+                script = reply_text.replace("--- Начало пересылаемого сообщения ---\n", "").replace(
+                    "\n--- Конец пересылаемого сообщения ---\n\n", "")
+
+            if not script:
+                return await edit_or_reply(message,
+                                           "🎭 **Режим театра**\nПиши сценарий:\n\n"
+                                           "`.t`\n"
+                                           "`Джо: Привет!`\n"
+                                           "`(грустно) Анна: Пока...`"
+                                           )
+
+            status = await edit_or_reply(message, "🎭 Распределяю роли и озвучиваю...")
+
+            wav_path = await generate_multispeaker_tts(script)
+
+            if wav_path:
+                await status.edit("🎭 Отправка...")
+                # Конвертируем в OGG для голосового
+                ogg_path = await convert_wav_to_ogg(wav_path)
+
+                await client.send_voice(
+                    chat_id=message.chat.id,
+                    voice=ogg_path if ogg_path else wav_path,
+                    caption="🎭 **Gemini Dialogue**"
+                )
+
+                if ogg_path: os.remove(ogg_path)
+                os.remove(wav_path)
+                if message.outgoing: await message.delete()
+                if status != message: await status.delete()
+            else:
+                await status.edit("❌ Ошибка генерации диалога.")
+
+        except Exception as e:
+            await edit_or_reply(message, f"Err: {e}")
+
+    # NEW: AI PODCAST GENERATOR (Auto Script + Audio)
+    @app.on_message(filters.command(["podcast", "подкаст"], prefixes="."))
+    async def podcast_handler(client, message):
+        try:
+            parts = message.text.split(maxsplit=1)
+            topic = parts[1] if len(parts) > 1 else "о технологиях будущего"
+
+            status = await edit_or_reply(message, f"🎙 Пишу сценарий подкаста про: {topic}...")
+
+            # 1. Генерируем сценарий через текстовую модель (2.0 Flash)
+            prompt = (
+                f"Напиши короткий, живой диалог (сценарий подкаста) на тему: '{topic}'. "
+                "Участники: Алекс (скептик) и Ева (оптимист). "
+                "Используй формат:\nАлекс: текст\nЕва: текст\n"
+                "Добавляй эмоции в скобках, например: (смеясь) Ева: ...\n"
+                "Длина: около 10-12 реплик. Язык: Русский."
+            )
+
+            script_response = await ask_gemini_oneshot(prompt)
+            # Убираем лишнее, оставляем только текст сценария (если там есть вступления)
+            # Обычно Gemini Flash слушается хорошо, но можно почистить:
+            script_clean = script_response.replace("**", "").replace("##", "")  # Markdown cleaning
+
+            await status.edit(f"🎙 Сценарий готов:\n\n{script_clean[:100]}...\n\nОзвучиваю...")
+
+            # 2. Озвучиваем сгенерированный сценарий
+            wav_path = await generate_multispeaker_tts(script_clean)
+
+            if wav_path:
+                ogg_path = await convert_wav_to_ogg(wav_path)
+
+                await client.send_voice(
+                    chat_id=message.chat.id,
+                    voice=ogg_path if ogg_path else wav_path,
+                    caption=f"🎙 **AI Podcast**\nТема: {topic}"
+                )
+
+                if ogg_path: os.remove(ogg_path)
+                os.remove(wav_path)
+                if message.outgoing: await message.delete()
+                if status != message: await status.delete()
+            else:
+                await status.edit("❌ Ошибка озвучки.")
+
         except Exception as e:
             await edit_or_reply(message, f"Err: {e}")
 
