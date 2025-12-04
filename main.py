@@ -238,6 +238,92 @@ async def create_telegraph_page(title, markdown_text):
     return await asyncio.to_thread(_sync_upload)
 
 
+async def transcribe_via_gemini(file_path):
+    """
+    Загружает файл в Gemini, делает транскрибацию с анализом эмоций и удаляет файл.
+    """
+    if not ai_client: return None
+
+    try:
+        # 1. Загружаем файл в Gemini
+        # В новой версии SDK upload делается так:
+        file_ref = await ai_client.aio.files.upload(file=file_path)
+
+        # Если это видео, нужно подождать процессинга
+        while file_ref.state.name == "PROCESSING":
+            await asyncio.sleep(2)
+            file_ref = await ai_client.aio.files.get(name=file_ref.name)
+
+        if file_ref.state.name == "FAILED":
+            return {"error": "Google File Processing Failed"}
+
+        # 2. Формируем промпт и схему
+        prompt = """
+        Process the audio/video and generate a detailed transcription.
+        Output MUST be in Russian (translate if necessary).
+
+        Requirements:
+        1. Identify speakers (Speaker 1, 2 etc).
+        2. Timestamps (MM:SS).
+        3. Detect primary emotion (Happy, Sad, Angry, Neutral, Excited, Serious).
+        4. Provide a summary at the start.
+        """
+
+        # Схема ответа (JSON)
+        schema = {
+            "type": "OBJECT",
+            "properties": {
+                "summary": {"type": "STRING", "description": "Краткое содержание (summary) на русском."},
+                "segments": {
+                    "type": "ARRAY",
+                    "items": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "time": {"type": "STRING", "description": "MM:SS"},
+                            "speaker": {"type": "STRING"},
+                            "text": {"type": "STRING", "description": "Текст на русском"},
+                            "emotion": {"type": "STRING",
+                                        "enum": ["Happy", "Sad", "Angry", "Neutral", "Excited", "Serious"]}
+                        },
+                        "required": ["time", "speaker", "text", "emotion"]
+                    }
+                }
+            },
+            "required": ["summary", "segments"]
+        }
+
+        # 3. Запрос к модели
+        # Используем Flash для скорости
+        response = await ai_client.aio.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[
+                types.Content(
+                    parts=[
+                        types.Part.from_uri(file_uri=file_ref.uri, mime_type=file_ref.mime_type),
+                        types.Part.from_text(text=prompt)
+                    ]
+                )
+            ],
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=schema
+            )
+        )
+
+        # 4. Удаляем файл из облака (Cleanup)
+        await ai_client.aio.files.delete(name=file_ref.name)
+
+        # 5. Возвращаем распаршенный JSON (SDK сам парсит в dict/object если mime_type json)
+        # Но для надежности берем text и json.loads, если SDK вернет строку
+        try:
+            return json.loads(response.text)
+        except:
+            return response.parsed  # Если SDK уже распарсил
+
+    except Exception as e:
+        print(f"Transcribe Error: {e}")
+        return {"error": str(e)}
+
 async def convert_wav_to_ogg(wav_path):
     """
     Конвертирует WAV в OGG Opus (формат голосовых Telegram) используя ffmpeg.
@@ -832,6 +918,7 @@ def register_handlers(app: Client):
             "• `.model` [1-3] — Выбор модели (Google Search)\n"
             "• `.history` — Показать последние 10 сообщений\n"
             "• `.reset` — Сброс памяти чата + Бэкап\n\n"
+            "• `.text` / `.stt` — (Reply) Распознать ГС/Видео в текст\n"
 
             "🎭 **Роли и Инструкции:**\n"
             "• `.sysglobal` [текст] — Глобальная инструкция (для всех чатов)\n"
@@ -1013,6 +1100,65 @@ def register_handlers(app: Client):
 
             await status.edit(chunks[0], disable_web_page_preview=True)
             for c in chunks[1:]: await client.send_message(message.chat.id, c, disable_web_page_preview=True)
+        except Exception as e:
+            await edit_or_reply(message, f"Err: {e}")
+
+    @app.on_message(filters.command(["text", "текст", "stt"], prefixes="."))
+    async def stt_handler(client, message):
+        try:
+            # Работаем только с реплаем
+            reply = message.reply_to_message
+            if not reply or not (reply.voice or reply.audio or reply.video or reply.video_note):
+                return await edit_or_reply(message, "⚠️ Ответьте на голосовое, аудио или видео сообщение.")
+
+            m_name = AVAILABLE_MODELS[SETTINGS.get("model_key", "1")]["name"]
+            status = await edit_or_reply(message, f"👂 {m_name} слушает и скачивает...")
+
+            # 1. Скачиваем файл
+            # limit=50*1024*1024 (50MB) чтобы не ждать вечность на RPi, хотя Gemini жует до 2ГБ
+            file_path = await client.download_media(reply)
+
+            if not file_path:
+                return await status.edit("❌ Ошибка скачивания.")
+
+            # 2. Отправляем в Gemini
+            await status.edit("🧠 Распознаю и анализирую...")
+            result = await transcribe_via_gemini(file_path)
+
+            # Удаляем локальный файл сразу
+            if os.path.exists(file_path):
+                os.remove(file_path)
+
+            if not result or "error" in result:
+                return await status.edit(f"❌ Ошибка API: {result.get('error', 'Unknown')}")
+
+            # 3. Формируем отчет
+            summary = result.get("summary", "Нет описания")
+            segments = result.get("segments", [])
+
+            # Заголовок
+            output_text = f"📝 **Транскрипция**\n\n📌 **Суть:** {summary}\n\n"
+
+            # Эмодзи для эмоций
+            emojis = {
+                "Happy": "😄", "Sad": "😔", "Angry": "😡",
+                "Neutral": "😐", "Excited": "🤩", "Serious": "🤔"
+            }
+
+            # Собираем диалог
+            for seg in segments:
+                emo = emojis.get(seg.get('emotion'), "🗣")
+                line = f"`{seg['time']}` {emo} **{seg['speaker']}:** {seg['text']}\n"
+                output_text += line
+
+            # 4. Отправляем (Чат или Telegraph)
+            if len(output_text) > 4000:
+                await status.edit("📝 Текст длинный, создаю статью...")
+                link = await create_telegraph_page("Audio Transcription", output_text)
+                await status.edit(f"📝 **Транскрипция готова:**\n📌 **Суть:** {summary}\n\n👉 {link}")
+            else:
+                await status.edit(output_text)
+
         except Exception as e:
             await edit_or_reply(message, f"Err: {e}")
 
