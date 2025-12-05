@@ -862,26 +862,51 @@ async def download_video(link: str, quality_mode: int):
             'outtmpl': '%(title)s.%(ext)s',
             'quiet': True,
             'no_warnings': True,
+            # ВАЖНО: Эта опция заставляет ffmpeg упаковать видео и звук в MP4
+            # Это происходит без перекодирования (очень быстро), просто смена контейнера
+            'merge_output_format': 'mp4',
+            # Добавляем совместимость с Geo-bypass (на всякий случай)
+            'geo_bypass': True,
         }
+
         if quality_mode == 2:
+            # --- MP3 (AUDIO) ---
             options.update({
                 'format': 'bestaudio/best',
-                'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3'}],
+                'postprocessors': [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'mp3',
+                    'preferredquality': '192',
+                }],
+                # Для аудио mp4 контейнер не нужен, убираем
+                'merge_output_format': None
             })
         elif quality_mode == 1:
-            options.update({'format': 'bestvideo[height<=480]+bestaudio/best'})
+            # --- LOW QUALITY (480p MP4) ---
+            # Стараемся найти именно mp4 (h264), чтобы точно работало везде
+            options.update({'format': 'bestvideo[height<=480][ext=mp4]+bestaudio/best[height<=480]/best'})
         else:
+            # --- BEST QUALITY (MP4) ---
+            # Качаем лучшее, но в конце yt-dlp сам склеит это в mp4
             options.update({'format': 'bestvideo+bestaudio/best'})
 
         with yt_dlp.YoutubeDL(options) as ydl:
             info = ydl.extract_info(link, download=True)
+
             if quality_mode == 2:
                 title = info['title']
-                # yt-dlp может заменить расширение
+                # yt-dlp может заменить спецсимволы в названии файла,
+                # надежнее искать файл с расширением mp3
                 potential_name = f"{title}.mp3"
-                # Простая проверка, иногда имя файла сложнее
-                return potential_name
-            return ydl.prepare_filename(info)
+                # Простая чистка имени от запрещенных знаков (yt-dlp это делает сам)
+                sanitized_title = re.sub(r'[\\/*?:"<>|]', "", title)
+                return f"{sanitized_title}.mp3"
+
+            # Для видео возвращаем имя с расширением mp4
+            # prepare_filename может вернуть webm, поэтому подменяем расширение
+            filename = ydl.prepare_filename(info)
+            base_name = filename.rsplit('.', 1)[0]
+            return f"{base_name}.mp4"
 
     try:
         return await asyncio.to_thread(_sync_dl)
