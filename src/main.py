@@ -2,10 +2,10 @@ import asyncio
 import os
 from pyrogram import Client, idle
 from pyrogram.errors import SessionPasswordNeeded, PasswordHashInvalid
-from config import API_ID, API_HASH, PHONES
+from src.config import API_ID, API_HASH, PHONES
 
 
-# Функция интерактивного входа (оставили здесь, т.к. она нужна только при старте)
+# Функция интерактивного входа
 async def interactive_auth(app: Client):
     print(f"🔄 Check: {app.name}")
     try:
@@ -41,14 +41,14 @@ async def interactive_auth(app: Client):
 async def main():
     if not os.path.exists("sessions"): os.makedirs("sessions")
 
-    # ВАЖНО: plugins=dict(root="handlers") подключает нашу папку handlers
+    # ВАЖНО: root="src.handlers" указывает путь от корня проекта
     apps = [
         Client(
             name=f"sessions/{p.strip().replace('+', '')}",
             api_id=API_ID,
             api_hash=API_HASH,
             phone_number=p.strip(),
-            plugins=dict(root="handlers")
+            plugins=dict(root="src.handlers")  # <--- БЫЛО "handlers", СТАЛО "src.handlers"
         ) for p in PHONES if p.strip()
     ]
 
