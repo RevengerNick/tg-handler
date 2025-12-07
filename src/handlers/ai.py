@@ -1,0 +1,310 @@
+import os
+from pyrogram import Client, filters
+from src.services import (
+    edit_or_reply, smart_reply, get_message_context,
+    ask_gemini_oneshot, ask_gemini_chat, generate_gemini_tts,
+    convert_wav_to_ogg, transcribe_via_gemini, generate_multispeaker_tts, create_telegraph_page,
+    smart_split
+)
+from src.state import SETTINGS, ASYNC_CHAT_SESSIONS
+from src.config import AVAILABLE_MODELS, AVAILABLE_VOICES, VOICE_NAMES_LIST
+from src.access_filters import AccessFilter
+import re
+
+
+# --- AI COMMANDS (TEXT) ---
+
+@Client.on_message(filters.command(["ai", "аи"], prefixes=".") & AccessFilter)
+async def ai_handler(client, message):
+    try:
+        # 1. Разбираем запрос
+        parts = message.text.split(maxsplit=1)
+        prompt = parts[1] if len(parts) > 1 else ""
+        reply_txt, reply_img = await get_message_context(client, message)
+
+        if not prompt and not reply_txt and not reply_img:
+            return await edit_or_reply(message, "🤖 Введите вопрос или ответьте на сообщение.")
+
+        # 2. Индикация
+        m_name = AVAILABLE_MODELS[SETTINGS.get("model_key", "1")]["name"]
+        status = await edit_or_reply(message, f"🤖 Думаю ({m_name})...")
+
+        # 3. Формируем контент для нейросети
+        final_prompt = f"{reply_txt}Мой вопрос: {prompt}" if reply_txt else prompt
+        content = [reply_img, final_prompt] if reply_img else final_prompt
+
+        # 4. Запрос
+        resp = await ask_gemini_oneshot(content)
+
+        # 5. Умная отправка (Чат или Телеграф)
+        await smart_reply(status, f"**Gemini ({m_name}):**\n\n{resp}", title=f"AI: {prompt[:20]}...")
+
+    except Exception as e:
+        await edit_or_reply(message, f"Err: {e}")
+
+
+@Client.on_message(filters.command(["ait", "аит"], prefixes=".") & AccessFilter)
+async def ait_handler(client, message):
+    try:
+        parts = message.text.split(maxsplit=1)
+        prompt = parts[1] if len(parts) > 1 else "Анализ"
+        reply_txt, reply_img = await get_message_context(client, message)
+
+        m_name = AVAILABLE_MODELS[SETTINGS.get("model_key", "1")]["name"]
+        status = await edit_or_reply(message, f"📝 {m_name} пишет статью...")
+
+        final = f"{reply_txt}\nЗадание: {prompt}"
+        content = [reply_img, final] if reply_img else final
+
+        resp = await ask_gemini_oneshot(content)
+
+        # Всегда Telegraph
+        link = await create_telegraph_page(f"AI: {prompt[:30]}", resp)
+        await status.edit(f"🧠 **Gemini ({m_name}):**\n📄 **Статья готова:**\n👉 {link}", disable_web_page_preview=False)
+    except Exception as e:
+        await edit_or_reply(message, f"Err: {e}")
+
+
+@Client.on_message(filters.command(["chat", "чат"], prefixes=".") & AccessFilter)
+async def chat_handler(client, message):
+    try:
+        parts = message.text.split(maxsplit=1)
+        prompt = parts[1] if len(parts) > 1 else ""
+        reply_txt, reply_img = await get_message_context(client, message)
+
+        if not prompt and not reply_txt and not reply_img:
+            return await edit_or_reply(message, "💬 Введите текст для диалога.")
+
+        m_name = AVAILABLE_MODELS[SETTINGS.get("model_key", "1")]["name"]
+        status = await edit_or_reply(message, f"💬 {m_name} думает...")
+
+        final = f"{reply_txt}{prompt}"
+        content = [reply_img, final] if reply_img else final
+
+        # Чат с памятью
+        resp = await ask_gemini_chat(message.chat.id, content)
+
+        user_header = f"👤 **Вы:** {prompt}" if prompt else "👤 **Контекст**"
+        full_response = f"{user_header}\n\n🤖 **{m_name}:**\n{resp}"
+
+        await smart_reply(status, full_response, title=f"Chat: {prompt[:20]}")
+    except Exception as e:
+        await edit_or_reply(message, f"Err: {e}")
+
+
+@Client.on_message(filters.me & filters.command(["chatt", "чатт"], prefixes="."))
+async def chatt_handler(client, message):
+    try:
+        parts = message.text.split(maxsplit=1)
+        prompt = parts[1] if len(parts) > 1 else "Продолжай"
+        reply_txt, reply_img = await get_message_context(client, message)
+
+        m_name = AVAILABLE_MODELS[SETTINGS.get("model_key", "1")]["name"]
+        status = await edit_or_reply(message, f"💬📝 {m_name} пишет в контексте...")
+
+        final = f"{reply_txt}{prompt}"
+        content = [reply_img, final] if reply_img else final
+
+        resp = await ask_gemini_chat(message.chat.id, content)
+
+        link = await create_telegraph_page(f"Context: {prompt[:20]}...", resp)
+        await status.edit(f"💬📝 **Ответ (Telegraph):**\n👉 {link}")
+    except Exception as e:
+        await edit_or_reply(message, f"Err: {e}")
+
+
+# --- AUDIO / VOICE COMMANDS ---
+
+@Client.on_message(filters.command(["say", "скажи", "saywav", "sayfile"], prefixes=".") & AccessFilter)
+async def say_handler(client, message):
+    try:
+        # Определяем режим (файл или голосовое) по команде
+        cmd = message.command[0].lower()
+        send_as_file = "wav" in cmd or "file" in cmd or "файл" in cmd
+
+        parts = message.text.split(maxsplit=1)
+        user_text = parts[1] if len(parts) > 1 else ""
+
+        # Чистим реплай от наших системных заголовков
+        reply_txt, _ = await get_message_context(client, message)
+        if reply_txt:
+            clean_reply = reply_txt.replace("--- Reply Start ---\n", "").replace("\n--- Reply End ---\n\n", "")
+            final_text = clean_reply
+        else:
+            final_text = user_text
+
+        if not final_text: return await edit_or_reply(message, "🗣 Введите текст.")
+
+        v_name = AVAILABLE_VOICES.get(SETTINGS.get("voice_key", "1"))["name"]
+        status = await edit_or_reply(message, f"🗣 {v_name} генерирует...")
+
+        # Генерируем WAV
+        wav_path = await generate_gemini_tts(final_text[:4000])
+
+        if wav_path and os.path.exists(wav_path):
+            await status.edit("🗣 Отправка...")
+
+            if send_as_file:
+                # Отправляем WAV как файл
+                await client.send_audio(
+                    message.chat.id,
+                    wav_path,
+                    title="Gemini TTS",
+                    performer=v_name,
+                    caption=f"🗣 **WAV Audio** ({v_name})"
+                )
+            else:
+                # Конвертируем в OGG для голосового
+                ogg_path = await convert_wav_to_ogg(wav_path)
+                if ogg_path:
+                    await client.send_voice(
+                        message.chat.id,
+                        ogg_path,
+                        caption=f"🗣 **Voice** ({v_name})"
+                    )
+                    os.remove(ogg_path)
+                else:
+                    await status.edit("⚠️ Ошибка конвертации ffmpeg. Отправляю WAV.")
+                    await client.send_audio(message.chat.id, wav_path)
+
+            os.remove(wav_path)
+            if message.outgoing: await message.delete()
+            if status != message: await status.delete()
+        else:
+            await status.edit("❌ Ошибка генерации TTS.")
+    except Exception as e:
+        await edit_or_reply(message, f"Err: {e}")
+
+
+@Client.on_message(filters.command(["text", "stt", "текст"], prefixes=".") & AccessFilter)
+async def stt_handler(client, message):
+    try:
+        reply = message.reply_to_message
+        # Проверяем наличие медиа
+        if not reply or not (reply.voice or reply.audio or reply.video or reply.video_note):
+            return await edit_or_reply(message, "⚠️ Ответьте на голосовое, аудио или видео.")
+
+        status = await edit_or_reply(message, "👂 Скачиваю файл...")
+        path = await client.download_media(reply)
+
+        await status.edit("🧠 Распознаю речь...")
+        res = await transcribe_via_gemini(path)
+
+        # Удаляем сразу
+        if os.path.exists(path): os.remove(path)
+
+        if "error" in res: return await status.edit(f"❌ Ошибка: {res['error']}")
+
+        # Форматирование результата
+        out = f"📝 **Суть:** {res.get('summary', '-')}\n\n"
+
+        emojis = {"Happy": "😄", "Sad": "😔", "Angry": "😡", "Neutral": "😐", "Excited": "🤩", "Serious": "🤔"}
+        for s in res.get('segments', []):
+            emo = emojis.get(s.get('emotion'), "🗣")
+            out += f"`{s.get('time')}` {emo} **{s.get('speaker')}:** {s.get('text')}\n"
+
+        await smart_reply(status, out, title="Transcription")
+    except Exception as e:
+        await edit_or_reply(message, f"Err: {e}")
+
+
+@Client.on_message(filters.command(["dialog", "диалог", "t"], prefixes=".") & AccessFilter)
+async def dialog_handler(client, message):
+    try:
+        parts = message.text.split(maxsplit=1)
+        raw_input = parts[1] if len(parts) > 1 else ""
+
+        reply_txt, _ = await get_message_context(client, message)
+        if reply_txt:
+            clean = reply_txt.replace("--- Reply Start ---\n", "").replace("\n--- Reply End ---\n\n", "")
+            raw_input = f"{raw_input}\n{clean}".strip()
+
+        if not raw_input:
+            return await edit_or_reply(message,
+                                       "🎭 **Диалог**\nФормат:\n`.t 1: Привет`\nИли: `.t 1=Puck 2=Kore`\n`1: ...`")
+
+        status = await edit_or_reply(message, "🎭 Распределяю роли...")
+
+        # Парсинг кастомных ролей в первой строке
+        lines = raw_input.split("\n")
+        cast_pairs = re.findall(r"(\w+)=([A-Za-z]+)", lines[0])
+        cast = {}
+        script = raw_input
+
+        if cast_pairs:
+            for n, v in cast_pairs:
+                # Проверка по значениям словаря
+                found = False
+                for _, vdata in AVAILABLE_VOICES.items():
+                    if vdata["name"] == v: found = True; break
+
+                # Или по списку имен
+                if not found and v in VOICE_NAMES_LIST: found = True
+
+                if found: cast[n] = v
+
+            # Удаляем строку настроек
+            script = "\n".join(lines[1:])
+
+        wav_path = await generate_multispeaker_tts(script, cast)
+
+        if wav_path:
+            await status.edit("🎭 Отправка...")
+            ogg_path = await convert_wav_to_ogg(wav_path)
+
+            desc = ", ".join([f"{k}={v}" for k, v in cast.items()]) if cast else "Auto-Cast"
+            await client.send_voice(
+                message.chat.id,
+                ogg_path if ogg_path else wav_path,
+                caption=f"🎭 **Dialogue** ({desc})"
+            )
+
+            if ogg_path: os.remove(ogg_path)
+            os.remove(wav_path)
+            if message.outgoing: await message.delete()
+            if status != message: await status.delete()
+        else:
+            await status.edit("❌ Ошибка генерации диалога.")
+    except Exception as e:
+        await edit_or_reply(message, f"Err: {e}")
+
+
+@Client.on_message(filters.command(["podcast", "подкаст"], prefixes=".") & AccessFilter)
+async def podcast_handler(client, message):
+    try:
+        parts = message.text.split(maxsplit=1)
+        topic = parts[1] if len(parts) > 1 else "будущем"
+
+        status = await edit_or_reply(message, f"🎙 Придумываю сценарий про: {topic}...")
+
+        # 1. Генерируем текст
+        prompt = (
+            f"Напиши диалог подкаста на тему '{topic}'. "
+            "Спикеры: '1' (мужчина) и '2' (женщина). "
+            "Формат: '1: текст', '2: текст'. Длина 8 реплик. Язык: Русский."
+        )
+        script_resp = await ask_gemini_oneshot(prompt)
+        # Чистка
+        script_clean = script_resp.replace("**", "").replace("##", "")
+
+        await status.edit(f"🎙 Озвучиваю...\n\n{script_clean[:100]}...")
+
+        # 2. Озвучиваем (Жесткий кастинг для подкаста)
+        cast = {"1": "Puck", "2": "Aoede"}
+        wav_path = await generate_multispeaker_tts(script_clean, cast)
+
+        if wav_path:
+            ogg_path = await convert_wav_to_ogg(wav_path)
+            await client.send_voice(
+                message.chat.id,
+                ogg_path if ogg_path else wav_path,
+                caption=f"🎙 **AI Podcast**\nТема: {topic}"
+            )
+            if ogg_path: os.remove(ogg_path)
+            os.remove(wav_path)
+            if message.outgoing: await message.delete()
+            if status != message: await status.delete()
+        else:
+            await status.edit("❌ Ошибка озвучки.")
+    except Exception as e:
+        await edit_or_reply(message, f"Err: {e}")
