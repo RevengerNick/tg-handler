@@ -2,6 +2,8 @@ import asyncio
 import time
 import os
 import re
+import platform # Для определения ОС
+import psutil   # Для системной инфо
 import aiohttp
 import markdown
 import requests
@@ -319,45 +321,51 @@ async def get_currency(amount, raw_from, raw_to=None):
 
 
 async def get_sys_info():
+    """
+    Системная информация (Кроссплатформенная, через psutil).
+    Работает и на Windows, и на Raspberry Pi.
+    """
     try:
+        # Определяем ОС
+        sys_name = platform.system()
+
+        # 1. CPU & RAM (работает везде)
+        cpu_usage = psutil.cpu_percent(interval=0.1)
+        ram = psutil.virtual_memory()
+
+        # 2. Uptime
+        uptime_seconds = time.time() - psutil.boot_time()
+        m, s = divmod(uptime_seconds, 60)
+        h, m = divmod(m, 60)
+        d, h = divmod(h, 24)
+        uptime_str = f"{int(h)}h {int(m)}m"
+        if d > 0: uptime_str = f"{int(d)}d {uptime_str}"
+
+        # 3. Температура (Сложно для Windows, легко для Linux)
         temp = "N/A"
-        if os.path.exists("/sys/class/thermal/thermal_zone0/temp"):
-            with open("/sys/class/thermal/thermal_zone0/temp", "r") as f:
-                temp = f"{int(f.read()) / 1000:.1f}°C"
-
-        load = os.getloadavg()[0]
-
-        mem_total = 0;
-        mem_avail = 0
-        if os.path.exists("/proc/meminfo"):
-            with open("/proc/meminfo", "r") as f:
-                for line in f:
-                    if "MemTotal" in line:
-                        mem_total = int(line.split()[1])
-                    elif "MemAvailable" in line:
-                        mem_avail = int(line.split()[1])
-
-        mem_perc = 0
-        if mem_total > 0:
-            mem_used = mem_total - mem_avail
-            mem_perc = int((mem_used / mem_total) * 100)
-
-        uptime = "N/A"
-        if os.path.exists("/proc/uptime"):
-            with open("/proc/uptime", "r") as f:
-                seconds = float(f.read().split()[0])
-                m, s = divmod(seconds, 60)
-                h, m = divmod(m, 60)
-                uptime = f"{int(h)}h {int(m)}m"
+        if sys_name == "Linux":
+            try:
+                # Пробуем через psutil
+                temps = psutil.sensors_temperatures()
+                if 'cpu_thermal' in temps:
+                    temp = f"{temps['cpu_thermal'][0].current}°C"
+                # Фолбэк для RPi (файловый)
+                elif os.path.exists("/sys/class/thermal/thermal_zone0/temp"):
+                    with open("/sys/class/thermal/thermal_zone0/temp", "r") as f:
+                        temp = f"{int(f.read()) / 1000:.1f}°C"
+            except:
+                pass
+        else:
+            temp = "N/A (Win)"
 
         model = SETTINGS.get("model_key", "?")
 
         return (
-            f"🖥 **RPi Status (Lite):**\n"
+            f"🖥 **System Info ({sys_name}):**\n"
             f"🌡 Temp: `{temp}`\n"
-            f"🧠 Load: `{load:.2f}`\n"
-            f"💾 RAM: `{mem_perc}%`\n"
-            f"⏱ Uptime: `{uptime}`\n"
+            f"🧠 CPU: `{cpu_usage}%`\n"
+            f"💾 RAM: `{ram.percent}%`\n"
+            f"⏱ Uptime: `{uptime_str}`\n"
             f"🤖 AI Model: `{model}`"
         )
     except Exception as e:

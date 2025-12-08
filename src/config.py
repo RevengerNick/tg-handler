@@ -6,7 +6,14 @@ load_dotenv()
 API_ID = int(os.getenv("API_ID", 0))
 API_HASH = os.getenv("API_HASH", "")
 PHONES = os.getenv("PHONES", "").split(",")
-GEMINI_KEY = os.getenv("GEMINI_API_KEY")
+
+keys_str = os.getenv("GEMINI_API_KEYS", "")
+if not keys_str:
+    single_key = os.getenv("GEMINI_API_KEY")
+    GEMINI_KEYS = [single_key] if single_key else []
+else:
+    GEMINI_KEYS = [k.strip() for k in keys_str.split(",") if k.strip()]
+
 YANDEX_TOKEN = os.getenv("YANDEX_TOKEN")
 EXCHANGE_KEY = os.getenv("EXCHANGE_API_KEY")
 SETTINGS_FILE = "settings.json"
