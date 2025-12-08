@@ -1,8 +1,8 @@
 import os
+import time
 import asyncio
 from pyrogram import Client, filters
-from src.services import edit_or_reply, get_currency, olx_parser
-from src.services.media import download_video, download_yandex_track
+from src.services import edit_or_reply, get_currency, olx_parser, download_video, download_yandex_track, analyze_chat_history
 from src.access_filters import AccessFilter
 
 
@@ -73,6 +73,25 @@ async def cur_handler(client, message):
     except Exception as e:
         await edit_or_reply(message, f"Err: {e}")
 
+
+@Client.on_message(filters.command(["stat", "стат", "анализ"], prefixes=".") & AccessFilter)
+async def stats_handler(client, message):
+    args = message.text.split()
+    days = 30  # По умолчанию месяц
+
+    if len(args) > 1:
+        param = args[1].lower()
+        if "год" in param or "year" in param:
+            days = 365
+        elif "недел" in param or "week" in param:
+            days = 7
+        elif "день" in param or "day" in param:
+            days = 1
+        elif param.isdigit():
+            days = int(param)
+
+    # Запускаем анализ
+    await analyze_chat_history(client, message, period_days=days)
 
 # --- УДАЛЕНИЕ ПРОБЕЛОВ ---
 @Client.on_message(filters.command(["s", "c", "с"], prefixes=".") & AccessFilter)
