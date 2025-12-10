@@ -14,3 +14,4 @@ psutil
 telegraph
 markdown
 requests
+textual
