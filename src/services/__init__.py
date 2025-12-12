@@ -13,3 +13,5 @@ from .web import create_telegraph_page, update_help_page, olx_parser, get_curren
 from .media import download_video, download_yandex_track
 
 from .analytics import analyze_chat_history
+
+from .image_gen import generate_imagen, generate_flux

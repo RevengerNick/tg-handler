@@ -155,22 +155,51 @@ async def dl_handler(client, message):
 @Client.on_message(filters.me & filters.command(["olx", "олх"], prefixes="."))
 async def olx_handler(client, message):
     try:
-        parts = message.text.split(maxsplit=1)
-        if len(parts) < 2: return await message.edit("Введите запрос.")
+        args = message.text.split()
+        if len(args) < 2:
+            return await message.edit(
+                "🔍 **OLX Парсер**\n\nПримеры:\n`.olx iphone` (1 стр, с фото)\n`.olx iphone 3` (3 стр, с фото)\n`.olx iphone noimg` (1 стр, без фото)\n`.olx iphone 5 noimg` (5 стр, без фото)")
 
-        query = parts[1]
-        await message.edit(f"🔍 Паршу OLX: {query}...")
+        # Дефолтные значения
+        max_pages = 1
+        with_images = True
+        query_parts = []
 
-        f = await olx_parser(query)
+        # Парсим аргументы с конца
+        for arg in args[1:]:
+            # Проверка на флаг "без картинок"
+            if arg.lower() in ["noimg", "noimage", "безфото", "-i"]:
+                with_images = False
+            # Проверка на количество страниц
+            elif arg.isdigit() and int(arg) < 20:  # Ограничим 20 страницами для безопасности
+                max_pages = int(arg)
+            # Иначе это часть поискового запроса
+            else:
+                query_parts.append(arg)
+
+        query = " ".join(query_parts)
+        if not query:
+            return await message.edit("❌ Вы не указали, что искать.")
+
+        mode_text = "с картинками" if with_images else "без картинок (быстро)"
+        await message.edit(f"🔍 Паршу OLX: **{query}**\n📄 Страниц: {max_pages}\n🚀 Режим: {mode_text}...")
+
+        f = await olx_parser(query, max_pages, with_images)
+
         if f:
-            await client.send_document(message.chat.id, f)
+            await client.send_document(
+                message.chat.id,
+                f,
+                caption=f"📦 **Результаты OLX**\n🔎 Запрос: `{query}`\n📄 Страниц: {max_pages}"
+            )
             os.remove(f)
-            # Чистим картинки
+            # Чистим временные картинки
             for i in os.listdir():
-                if i.startswith("temp_img_"): os.remove(i)
+                if i.startswith("temp_img_") and i.endswith(".png"): os.remove(i)
             await message.delete()
         else:
-            await message.edit("Ничего не найдено.")
+            await message.edit("❌ Ничего не найдено или ошибка парсера.")
+
     except Exception as e:
         await message.edit(f"OLX Err: {e}")
 

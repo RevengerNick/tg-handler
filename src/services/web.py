@@ -172,15 +172,21 @@ async def create_telegraph_page(title, markdown_text):
     return await asyncio.to_thread(_sync_upload)
 
 
-async def olx_parser(query: str):
-    """Парсинг OLX в Excel"""
+async def olx_parser(query: str, max_pages: int = 1, with_images: bool = True):
+    """
+    Парсит OLX.uz.
+    :param query: Поисковый запрос
+    :param max_pages: Количество страниц для парсинга
+    :param with_images: Скачивать ли картинки (влияет на скорость)
+    """
 
     def _scrape():
         chrome_options = Options()
         chrome_options.add_argument("--headless")
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
-        chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        chrome_options.add_argument(
+            "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36")
 
         try:
             driver = webdriver.Chrome(options=chrome_options)
@@ -190,69 +196,109 @@ async def olx_parser(query: str):
 
         wb = Workbook()
         ws = wb.active
-        ws.append(['Фото', 'Ссылка', 'Цена', 'Название', 'Дата/Место', 'Состояние'])
+        # Добавляем колонку "Страница" для удобства
+        ws.append(['Фото', 'Ссылка', 'Цена', 'Название', 'Дата/Место', 'Состояние', 'Страница'])
 
-        dims = {'A': 22, 'B': 15, 'C': 20, 'D': 40, 'E': 25, 'F': 15}
+        dims = {'A': 22, 'B': 15, 'C': 20, 'D': 40, 'E': 25, 'F': 15, 'G': 10}
         for col, w in dims.items(): ws.column_dimensions[col].width = w
 
+        row = 2  # Начинаем со второй строки (после заголовков)
+
         try:
-            driver.get(f"https://www.olx.uz/list/q-{query}/")
-            time.sleep(2)
+            for page in range(1, max_pages + 1):
+                # Формируем URL для пагинации
+                base_url = f"https://www.olx.uz/list/q-{query}/"
+                url = base_url if page == 1 else f"{base_url}?page={page}"
 
-            cards = driver.find_elements("css selector", "div[data-cy='l-card']")
-            row = 2
-            for card in cards[:10]:
-                try:
-                    driver.execute_script("arguments[0].scrollIntoView({behavior: 'instant', block: 'center'});", card)
-                    time.sleep(0.5)
+                print(f"📄 Scraping Page {page}: {url}")
+                driver.get(url)
 
-                    soup = BeautifulSoup(card.get_attribute('outerHTML'), 'html.parser')
+                # Ждем прогрузки (на первой странице чуть дольше)
+                time.sleep(2 if page == 1 else 1.5)
 
-                    title_tag = soup.find("h6") or soup.find("h4")
-                    if not title_tag: continue
-                    title = title_tag.text.strip()
+                # Проверяем, есть ли результаты (если страниц меньше, чем запрошено)
+                if "Ничего не найдено" in driver.page_source:
+                    print("End of results.")
+                    break
 
-                    price_tag = soup.find("p", {"data-testid": "ad-price"})
-                    price = price_tag.text.strip() if price_tag else "Договорная"
+                cards = driver.find_elements("css selector", "div[data-cy='l-card']")
+                if not cards:
+                    break
 
-                    link_tag = soup.find("a")
-                    href = link_tag.get("href")
-                    link = f"https://www.olx.uz{href}" if href.startswith("/") else href
+                for card in cards:
+                    try:
+                        # Скролл нужен даже без картинок, чтобы подгрузился DOM
+                        driver.execute_script("arguments[0].scrollIntoView({behavior: 'instant', block: 'center'});",
+                                              card)
+                        # Если картинки не нужны, скроллим быстрее
+                        time.sleep(0.5 if with_images else 0.1)
 
-                    loc_tag = soup.find("p", {"data-testid": "location-date"})
-                    loc = loc_tag.text.strip() if loc_tag else "-"
+                        soup = BeautifulSoup(card.get_attribute('outerHTML'), 'html.parser')
 
-                    cond_tag = soup.find("span", title=True)
-                    cond = cond_tag['title'] if cond_tag and cond_tag.has_attr('title') and len(
-                        cond_tag['title']) < 30 else "-"
+                        title_tag = soup.find("h6") or soup.find("h4")
+                        if not title_tag: continue
+                        title = title_tag.text.strip()
 
-                    img_tag = soup.find("img")
-                    if img_tag:
-                        src = img_tag.get("src") or img_tag.get("srcset", "").split()[0]
-                        if src and "http" in src:
-                            hd_src = re.sub(r';s=\d+x\d+', ';s=1000x1000', src)
-                            resp = requests.get(hd_src, timeout=5)
-                            if resp.status_code == 200:
-                                img = Image.open(BytesIO(resp.content))
-                                img.thumbnail((150, 150))
-                                path = f"temp_img_{row}.png"
-                                img.save(path)
-                                excel_img = ExcelImage(path)
-                                excel_img.width = 150
-                                excel_img.height = 120
-                                ws.add_image(excel_img, f"A{row}")
-                                ws.row_dimensions[row].height = 100
+                        price_tag = soup.find("p", {"data-testid": "ad-price"})
+                        price = price_tag.text.strip() if price_tag else "Договорная"
 
-                    ws[f"B{row}"] = f'=HYPERLINK("{link}", "Перейти")'
-                    ws[f"B{row}"].style = "Hyperlink"
-                    ws[f"C{row}"] = price
-                    ws[f"D{row}"] = title
-                    ws[f"E{row}"] = loc
-                    ws[f"F{row}"] = cond
-                    row += 1
-                except Exception as e:
-                    print(f"Card Parse Error: {e}")
-                    continue
+                        link_tag = soup.find("a")
+                        href = link_tag.get("href")
+                        link = f"https://www.olx.uz{href}" if href.startswith("/") else href
+
+                        loc_tag = soup.find("p", {"data-testid": "location-date"})
+                        loc = loc_tag.text.strip() if loc_tag else "-"
+
+                        cond_tag = soup.find("span", title=True)
+                        cond = cond_tag['title'] if cond_tag and cond_tag.has_attr('title') and len(
+                            cond_tag['title']) < 30 else "-"
+
+                        # --- ОБРАБОТКА ФОТО (ТОЛЬКО ЕСЛИ НУЖНО) ---
+                        if with_images:
+                            img_tag = soup.find("img")
+                            if img_tag:
+                                src = img_tag.get("src") or img_tag.get("srcset", "").split()[0]
+                                if src and "http" in src:
+                                    hd_src = re.sub(r';s=\d+x\d+', ';s=1000x1000', src)
+                                    try:
+                                        resp = requests.get(hd_src, timeout=3)
+                                        if resp.status_code == 200:
+                                            img = Image.open(BytesIO(resp.content))
+                                            img.thumbnail((150, 150))
+
+                                            # Уникальное имя для каждой картинки
+                                            path = f"temp_img_{row}.png"
+                                            img.save(path)
+
+                                            excel_img = ExcelImage(path)
+                                            excel_img.width = 150
+                                            excel_img.height = 120
+
+                                            ws.add_image(excel_img, f"A{row}")
+                                            ws.row_dimensions[row].height = 100
+                                    except:
+                                        pass
+                        else:
+                            # Если без фото, ставим высоту строки стандартную
+                            ws[f"A{row}"] = "No Image"
+
+                        # Заполняем текстовые данные
+                        ws[f"B{row}"] = f'=HYPERLINK("{link}", "Перейти")'
+                        ws[f"B{row}"].style = "Hyperlink"
+                        ws[f"C{row}"] = price
+                        ws[f"D{row}"] = title
+                        ws[f"E{row}"] = loc
+                        ws[f"F{row}"] = cond
+                        ws[f"G{row}"] = page  # Номер страницы
+
+                        row += 1
+                    except Exception as e:
+                        print(f"Card Error: {e}")
+                        continue
+
+                # Если спарсили меньше 5 товаров на странице, вероятно это конец
+                if len(cards) < 5:
+                    break
 
             fname = f"olx_{query}_{int(time.time())}.xlsx"
             wb.save(fname)
@@ -357,7 +403,6 @@ async def get_sys_info():
                 pass
         else:
             temp = "N/A (Win)"
-
         model = SETTINGS.get("model_key", "?")
 
         return (

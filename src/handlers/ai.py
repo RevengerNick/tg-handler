@@ -4,7 +4,7 @@ from src.services import (
     edit_or_reply, smart_reply, get_message_context,
     ask_gemini_oneshot, ask_gemini_chat, generate_gemini_tts,
     convert_wav_to_ogg, transcribe_via_gemini, generate_multispeaker_tts, create_telegraph_page,
-    smart_split
+    generate_imagen, generate_flux # <-- Добавил
 )
 from src.state import SETTINGS, ASYNC_CHAT_SESSIONS
 from src.config import AVAILABLE_MODELS, AVAILABLE_VOICES, VOICE_NAMES_LIST
@@ -306,5 +306,67 @@ async def podcast_handler(client, message):
             if status != message: await status.delete()
         else:
             await status.edit("❌ Ошибка озвучки.")
+    except Exception as e:
+        await edit_or_reply(message, f"Err: {e}")
+
+
+@Client.on_message(filters.command(["img", "имг", "imagen"], prefixes=".") & AccessFilter)
+async def imagen_handler(client, message):
+    try:
+        parts = message.text.split(maxsplit=1)
+        prompt = parts[1] if len(parts) > 1 else ""
+
+        if not prompt:
+            return await edit_or_reply(message, "🎨 Введите описание картинки (на английском лучше).")
+
+        status = await edit_or_reply(message, "🎨 **Imagen 3** рисует...")
+
+        # Запускаем генерацию
+        file_path, error = await generate_imagen(prompt)
+
+        if file_path:
+            await status.edit("🎨 Отправляю...")
+            await client.send_photo(
+                message.chat.id,
+                photo=file_path,
+                caption=f"🎨 **Imagen 3**\n`{prompt}`"
+            )
+            os.remove(file_path)
+            if message.outgoing: await message.delete()
+            if status != message: await status.delete()
+        else:
+            await status.edit(f"❌ Ошибка Imagen: {error}")
+
+    except Exception as e:
+        await edit_or_reply(message, f"Err: {e}")
+
+
+@Client.on_message(filters.command(["flux", "флакс", "арт"], prefixes=".") & AccessFilter)
+async def flux_handler(client, message):
+    try:
+        parts = message.text.split(maxsplit=1)
+        prompt = parts[1] if len(parts) > 1 else ""
+
+        if not prompt:
+            return await edit_or_reply(message, "🎨 Введите описание для Flux.")
+
+        status = await edit_or_reply(message, "🎨 **Flux** рисует...")
+
+        # Запускаем генерацию
+        file_path, error = await generate_flux(prompt)
+
+        if file_path:
+            await status.edit("🎨 Отправляю...")
+            await client.send_photo(
+                message.chat.id,
+                photo=file_path,
+                caption=f"🎨 **Flux.1**\n`{prompt}`"
+            )
+            os.remove(file_path)
+            if message.outgoing: await message.delete()
+            if status != message: await status.delete()
+        else:
+            await status.edit(f"❌ Ошибка Flux: {error}")
+
     except Exception as e:
         await edit_or_reply(message, f"Err: {e}")
