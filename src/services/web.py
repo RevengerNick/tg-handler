@@ -15,6 +15,7 @@ from datetime import datetime
 from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from telegraph import Telegraph
 
 from src.config import EXCHANGE_KEY
@@ -174,10 +175,7 @@ async def create_telegraph_page(title, markdown_text):
 
 async def olx_parser(query: str, max_pages: int = 1, with_images: bool = True):
     """
-    Парсит OLX.uz.
-    :param query: Поисковый запрос
-    :param max_pages: Количество страниц для парсинга
-    :param with_images: Скачивать ли картинки (влияет на скорость)
+    Парсит OLX.uz (Явное указание путей для RPi).
     """
 
     def _scrape():
@@ -188,49 +186,55 @@ async def olx_parser(query: str, max_pages: int = 1, with_images: bool = True):
         chrome_options.add_argument(
             "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36")
 
+        # --- ИСПРАВЛЕНИЕ ДЛЯ RASPBERRY PI ---
+        service = None
+
+        # 1. Проверяем стандартный путь (apt install chromium-chromedriver)
+        if os.path.exists("/usr/bin/chromedriver"):
+            service = Service("/usr/bin/chromedriver")
+        # 2. Проверяем альтернативный путь (иногда бывает тут)
+        elif os.path.exists("/usr/lib/chromium-browser/chromedriver"):
+            service = Service("/usr/lib/chromium-browser/chromedriver")
+
+        # Если нашли драйвер, используем его. Если нет - надеемся на удачу (Selenium Manager)
         try:
-            driver = webdriver.Chrome(options=chrome_options)
+            if service:
+                driver = webdriver.Chrome(service=service, options=chrome_options)
+            else:
+                print("⚠️ Driver path not found, trying default...")
+                driver = webdriver.Chrome(options=chrome_options)
         except Exception as e:
-            print(f"Selenium Driver Error: {e}")
+            print(f"Selenium Driver Critical Error: {e}")
             return None
 
         wb = Workbook()
         ws = wb.active
-        # Добавляем колонку "Страница" для удобства
         ws.append(['Фото', 'Ссылка', 'Цена', 'Название', 'Дата/Место', 'Состояние', 'Страница'])
 
         dims = {'A': 22, 'B': 15, 'C': 20, 'D': 40, 'E': 25, 'F': 15, 'G': 10}
         for col, w in dims.items(): ws.column_dimensions[col].width = w
 
-        row = 2  # Начинаем со второй строки (после заголовков)
+        row = 2
 
         try:
             for page in range(1, max_pages + 1):
-                # Формируем URL для пагинации
                 base_url = f"https://www.olx.uz/list/q-{query}/"
                 url = base_url if page == 1 else f"{base_url}?page={page}"
 
                 print(f"📄 Scraping Page {page}: {url}")
                 driver.get(url)
-
-                # Ждем прогрузки (на первой странице чуть дольше)
                 time.sleep(2 if page == 1 else 1.5)
 
-                # Проверяем, есть ли результаты (если страниц меньше, чем запрошено)
                 if "Ничего не найдено" in driver.page_source:
-                    print("End of results.")
                     break
 
                 cards = driver.find_elements("css selector", "div[data-cy='l-card']")
-                if not cards:
-                    break
+                if not cards: break
 
                 for card in cards:
                     try:
-                        # Скролл нужен даже без картинок, чтобы подгрузился DOM
                         driver.execute_script("arguments[0].scrollIntoView({behavior: 'instant', block: 'center'});",
                                               card)
-                        # Если картинки не нужны, скроллим быстрее
                         time.sleep(0.5 if with_images else 0.1)
 
                         soup = BeautifulSoup(card.get_attribute('outerHTML'), 'html.parser')
@@ -253,7 +257,6 @@ async def olx_parser(query: str, max_pages: int = 1, with_images: bool = True):
                         cond = cond_tag['title'] if cond_tag and cond_tag.has_attr('title') and len(
                             cond_tag['title']) < 30 else "-"
 
-                        # --- ОБРАБОТКА ФОТО (ТОЛЬКО ЕСЛИ НУЖНО) ---
                         if with_images:
                             img_tag = soup.find("img")
                             if img_tag:
@@ -266,39 +269,33 @@ async def olx_parser(query: str, max_pages: int = 1, with_images: bool = True):
                                             img = Image.open(BytesIO(resp.content))
                                             img.thumbnail((150, 150))
 
-                                            # Уникальное имя для каждой картинки
                                             path = f"temp_img_{row}.png"
                                             img.save(path)
 
                                             excel_img = ExcelImage(path)
                                             excel_img.width = 150
                                             excel_img.height = 120
-
                                             ws.add_image(excel_img, f"A{row}")
                                             ws.row_dimensions[row].height = 100
                                     except:
                                         pass
                         else:
-                            # Если без фото, ставим высоту строки стандартную
                             ws[f"A{row}"] = "No Image"
 
-                        # Заполняем текстовые данные
                         ws[f"B{row}"] = f'=HYPERLINK("{link}", "Перейти")'
                         ws[f"B{row}"].style = "Hyperlink"
                         ws[f"C{row}"] = price
                         ws[f"D{row}"] = title
                         ws[f"E{row}"] = loc
                         ws[f"F{row}"] = cond
-                        ws[f"G{row}"] = page  # Номер страницы
+                        ws[f"G{row}"] = page
 
                         row += 1
                     except Exception as e:
                         print(f"Card Error: {e}")
                         continue
 
-                # Если спарсили меньше 5 товаров на странице, вероятно это конец
-                if len(cards) < 5:
-                    break
+                if len(cards) < 5: break
 
             fname = f"olx_{query}_{int(time.time())}.xlsx"
             wb.save(fname)
