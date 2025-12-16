@@ -14,8 +14,8 @@ from openpyxl.drawing.image import Image as ExcelImage
 from datetime import datetime
 from bs4 import BeautifulSoup
 from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.firefox.options import Options as FirefoxOptions
+from selenium.webdriver.firefox.service import Service as FirefoxService
 from telegraph import Telegraph
 
 from src.config import EXCHANGE_KEY
@@ -179,32 +179,26 @@ async def olx_parser(query: str, max_pages: int = 1, with_images: bool = True):
     """
 
     def _scrape():
-        chrome_options = Options()
-        chrome_options.add_argument("--headless")
-        chrome_options.add_argument("--no-sandbox")
-        chrome_options.add_argument("--disable-dev-shm-usage")
-        chrome_options.add_argument(
-            "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36")
+        # Настройки Firefox
+        options = FirefoxOptions()
+        options.add_argument("--headless")  # Без окна
 
-        # --- ИСПРАВЛЕНИЕ ДЛЯ RASPBERRY PI ---
-        service = None
+        # Маскировка
+        options.set_preference("general.useragent.override",
+                               "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36")
 
-        # 1. Проверяем стандартный путь (apt install chromium-chromedriver)
-        if os.path.exists("/usr/bin/chromedriver"):
-            service = Service("/usr/bin/chromedriver")
-        # 2. Проверяем альтернативный путь (иногда бывает тут)
-        elif os.path.exists("/usr/lib/chromium-browser/chromedriver"):
-            service = Service("/usr/lib/chromium-browser/chromedriver")
-
-        # Если нашли драйвер, используем его. Если нет - надеемся на удачу (Selenium Manager)
         try:
+            # Firefox обычно сам находит geckodriver в /usr/bin
+            # Но можно указать явно
+            service = FirefoxService("/usr/bin/geckodriver") if os.path.exists("/usr/bin/geckodriver") else None
+
             if service:
-                driver = webdriver.Chrome(service=service, options=chrome_options)
+                driver = webdriver.Firefox(service=service, options=options)
             else:
-                print("⚠️ Driver path not found, trying default...")
-                driver = webdriver.Chrome(options=chrome_options)
+                driver = webdriver.Firefox(options=options)
+
         except Exception as e:
-            print(f"Selenium Driver Critical Error: {e}")
+            print(f"Firefox Driver Error: {e}")
             return None
 
         wb = Workbook()
