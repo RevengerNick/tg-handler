@@ -89,6 +89,45 @@ async def rotate_key_and_retry(func, *args, **kwargs):
 
 
 # --- AI LOGIC (HELPERS) ---
+async def get_gemini_stream(chat_id, contents, is_chat=False):
+    """
+    Возвращает асинхронный генератор (iterator), который выдает кусочки текста.
+    Использует ротацию ключей при СТАРТЕ генерации.
+    """
+
+    async def _get_iterator():
+        client = get_ai_client()
+        if not client: raise Exception("No Client")
+
+        model_id, config = get_ai_config(chat_id)
+
+        # Режим чата или одиночный
+        if is_chat:
+            if chat_id not in ASYNC_CHAT_SESSIONS:
+                ASYNC_CHAT_SESSIONS[chat_id] = await client.aio.chats.create(
+                    model=model_id, config=config
+                )
+            chat = ASYNC_CHAT_SESSIONS[chat_id]
+            # Важно: send_message_stream
+            return await chat.send_message_stream(contents)
+        else:
+            # Одиночный запрос: generate_content_stream
+            return await client.aio.models.generate_content_stream(
+                model=model_id, contents=contents, config=config
+            )
+
+    try:
+        # Мы используем ротацию, чтобы ПОЛУЧИТЬ итератор.
+        # Если ключ забанен, мы переключимся и попробуем снова.
+        # Но если ошибка возникнет в середине стрима, ротация уже не поможет
+        # (нельзя продолжить генерацию с середины фразы).
+        stream = await rotate_key_and_retry(_get_iterator)
+        return stream
+    except Exception as e:
+        # Если даже начать не смогли
+        print(f"Stream Init Error: {e}")
+        return None
+
 
 def get_ai_config(chat_id=None):
     key = SETTINGS.get("model_key", "1")

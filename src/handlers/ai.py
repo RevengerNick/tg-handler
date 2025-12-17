@@ -4,8 +4,9 @@ from src.services import (
     edit_or_reply, smart_reply, get_message_context,
     ask_gemini_oneshot, ask_gemini_chat, generate_gemini_tts,
     convert_wav_to_ogg, transcribe_via_gemini, generate_multispeaker_tts, create_telegraph_page,
-    generate_imagen, generate_flux # <-- Добавил
+    generate_imagen, generate_flux, get_gemini_stream  # <-- Добавил
 )
+from src.services.utils import handle_stream_output
 from src.state import SETTINGS, ASYNC_CHAT_SESSIONS
 from src.config import AVAILABLE_MODELS, AVAILABLE_VOICES, VOICE_NAMES_LIST
 from src.access_filters import AccessFilter
@@ -17,27 +18,60 @@ import re
 @Client.on_message(filters.command(["ai", "аи"], prefixes=".") & AccessFilter)
 async def ai_handler(client, message):
     try:
-        # 1. Разбираем запрос
         parts = message.text.split(maxsplit=1)
         prompt = parts[1] if len(parts) > 1 else ""
         reply_txt, reply_img = await get_message_context(client, message)
 
         if not prompt and not reply_txt and not reply_img:
-            return await edit_or_reply(message, "🤖 Введите вопрос или ответьте на сообщение.")
+            return await edit_or_reply(message, "🤖 Введите вопрос.")
 
-        # 2. Индикация
         m_name = AVAILABLE_MODELS[SETTINGS.get("model_key", "1")]["name"]
         status = await edit_or_reply(message, f"🤖 Думаю ({m_name})...")
 
-        # 3. Формируем контент для нейросети
-        final_prompt = f"{reply_txt}Мой вопрос: {prompt}" if reply_txt else prompt
-        content = [reply_img, final_prompt] if reply_img else final_prompt
+        final = f"{reply_txt}Вопрос: {prompt}" if reply_txt else prompt
+        content = [reply_img, final] if reply_img else final
 
-        # 4. Запрос
-        resp = await ask_gemini_oneshot(content)
+        # --- СТРИМИНГ ---
+        # 1. Получаем генератор
+        stream = await get_gemini_stream(None, content, is_chat=False)
 
-        # 5. Умная отправка (Чат или Телеграф)
-        await smart_reply(status, f"**Gemini ({m_name}):**\n\n{resp}", title=f"AI: {prompt[:20]}...")
+        if stream:
+            # 2. Запускаем обработчик вывода
+            header = f"**Gemini ({m_name}):**"
+            await handle_stream_output(client, status, stream, title=f"AI: {prompt[:20]}", header=header)
+        else:
+            await status.edit("❌ Ошибка запуска стрима (все ключи перебраны?).")
+
+    except Exception as e:
+        await edit_or_reply(message, f"Err: {e}")
+
+
+@Client.on_message(filters.command(["chat", "чат"], prefixes=".") & AccessFilter)
+async def chat_handler(client, message):
+    try:
+        parts = message.text.split(maxsplit=1)
+        prompt = parts[1] if len(parts) > 1 else ""
+        reply_txt, reply_img = await get_message_context(client, message)
+
+        if not prompt and not reply_txt and not reply_img:
+            return await edit_or_reply(message, "💬 Текст?")
+
+        m_name = AVAILABLE_MODELS[SETTINGS.get("model_key", "1")]["name"]
+        status = await edit_or_reply(message, f"💬 {m_name} думает...")
+
+        final = f"{reply_txt}{prompt}"
+        content = [reply_img, final] if reply_img else final
+
+        # --- СТРИМИНГ (ЧАТ) ---
+        stream = await get_gemini_stream(message.chat.id, content, is_chat=True)
+
+        if stream:
+            user_header = f"👤 **Вы:** {prompt}" if prompt else "👤 **Контекст**"
+            header = f"{user_header}\n\n🤖 **{m_name}:**"
+
+            await handle_stream_output(client, status, stream, title=f"Chat: {prompt[:20]}", header=header)
+        else:
+            await status.edit("❌ Ошибка стрима.")
 
     except Exception as e:
         await edit_or_reply(message, f"Err: {e}")
@@ -61,33 +95,6 @@ async def ait_handler(client, message):
         # Всегда Telegraph
         link = await create_telegraph_page(f"AI: {prompt[:30]}", resp)
         await status.edit(f"🧠 **Gemini ({m_name}):**\n📄 **Статья готова:**\n👉 {link}", disable_web_page_preview=False)
-    except Exception as e:
-        await edit_or_reply(message, f"Err: {e}")
-
-
-@Client.on_message(filters.command(["chat", "чат"], prefixes=".") & AccessFilter)
-async def chat_handler(client, message):
-    try:
-        parts = message.text.split(maxsplit=1)
-        prompt = parts[1] if len(parts) > 1 else ""
-        reply_txt, reply_img = await get_message_context(client, message)
-
-        if not prompt and not reply_txt and not reply_img:
-            return await edit_or_reply(message, "💬 Введите текст для диалога.")
-
-        m_name = AVAILABLE_MODELS[SETTINGS.get("model_key", "1")]["name"]
-        status = await edit_or_reply(message, f"💬 {m_name} думает...")
-
-        final = f"{reply_txt}{prompt}"
-        content = [reply_img, final] if reply_img else final
-
-        # Чат с памятью
-        resp = await ask_gemini_chat(message.chat.id, content)
-
-        user_header = f"👤 **Вы:** {prompt}" if prompt else "👤 **Контекст**"
-        full_response = f"{user_header}\n\n🤖 **{m_name}:**\n{resp}"
-
-        await smart_reply(status, full_response, title=f"Chat: {prompt[:20]}")
     except Exception as e:
         await edit_or_reply(message, f"Err: {e}")
 

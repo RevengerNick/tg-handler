@@ -1,4 +1,6 @@
 import asyncio
+import time
+
 from src.services.web import create_telegraph_page
 
 
@@ -62,6 +64,68 @@ async def smart_reply(message, text, title="AI Response", use_markdown=True):
     except Exception as e:
         await edit_or_reply(message, f"SmartSend Err: {e}")
 
+
+async def handle_stream_output(client, message, stream_generator, title="AI Response", header=""):
+    """
+    Принимает поток от Gemini и обновляет сообщение в Telegram в реальном времени.
+    Если текст > 4000, переключается на Telegraph.
+    """
+    full_text = ""
+    last_update_time = 0
+    is_telegraph_mode = False
+
+    # Стартовое сообщение
+    current_msg = message  # Сообщение, которое мы редактируем (обычно статус "Думаю...")
+
+    try:
+        # Перебираем кусочки (chunks)
+        async for chunk in stream_generator:
+            if chunk.text:
+                full_text += chunk.text
+
+                # --- ЛОГИКА TELEGRAPH ---
+                if len(full_text) > 4000:
+                    if not is_telegraph_mode:
+                        is_telegraph_mode = True
+                        # Один раз меняем сообщение, чтобы юзер знал
+                        await current_msg.edit(
+                            f"{header}\n\n📝 **Ответ стал слишком длинным.**\nГенерирую статью в Telegraph... ⏳")
+                    # В режиме телеграфа мы просто копим текст, не редактируя сообщение
+                    continue
+
+                # --- ЛОГИКА ОБНОВЛЕНИЯ (Раз в 1.5 сек) ---
+                now = time.time()
+                if now - last_update_time > 1.5:
+                    try:
+                        # Формируем красивый вывод
+                        display_text = f"{header}\n\n{full_text} █"  # █ курсор
+                        await current_msg.edit(display_text, disable_web_page_preview=True)
+                        last_update_time = now
+                    except Exception:
+                        # Если словили FloodWait или ошибку разметки - просто пропускаем кадр
+                        pass
+
+        # --- ФИНАЛ ---
+        if is_telegraph_mode:
+            # Создаем статью
+            link = await create_telegraph_page(title, full_text)
+            final_view = f"{header}\n\n📝 **{title} (Longread):**\n👉 {link}"
+            await current_msg.edit(final_view)
+        else:
+            # Убираем курсор и форматируем Markdown
+            # Добавляем источники, если они есть (в стриме они приходят в конце, но в chunk.text их нет)
+            # В v1 API grounding приходил отдельно, в v2 может быть в chunk.candidates
+            # Пока оставим просто текст
+            final_view = f"{header}\n\n{full_text}"
+            await current_msg.edit(final_view, disable_web_page_preview=True)
+
+    except Exception as e:
+        print(f"Streaming Loop Error: {e}")
+        # Если упали в процессе, выводим то, что успели накопить
+        if full_text:
+            await current_msg.edit(f"{header}\n\n{full_text}\n\n❌ **Обрыв связи:** {e}")
+        else:
+            await current_msg.edit(f"❌ Ошибка стрима: {e}")
 
 async def get_message_context(client, message):
     """
