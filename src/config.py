@@ -98,8 +98,9 @@ AVAILABLE_VOICES = {
 
 AVAILABLE_MODELS = {
     "1": {"id": "gemini-2.5-flash", "name": "⚡️ 2.5 Flash (Google Search)", "search": True},
-    "2": {"id": "gemini-2.5-pro", "name": "🧠 2.5 Pro (Thinking)", "search": False},
-    "3": {"id": "gemini-2.0-flash", "name": "🚀 2.0 Flash (Fast)", "search": False},
+    "2": {"id": "gemini-3-flash-preview", "name": "⚡️ 3 Flash (Google Search)", "search": True},
+    "3": {"id": "gemini-2.5-pro", "name": "🧠 2.5 Pro (Thinking)", "search": False},
+    "4": {"id": "gemini-2.0-flash", "name": "🚀 2.0 Flash (Fast)", "search": False},
 }
 
 AVAILABLE_TTS_MODELS = {
