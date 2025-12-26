@@ -5,6 +5,11 @@ from src.config import SETTINGS_FILE, AVAILABLE_MODELS
 # Хранилище АСИНХРОННЫХ сессий чата
 ASYNC_CHAT_SESSIONS = {}
 
+MIMIC_STATE = {
+    "buffers": {},
+    "tasks": {}
+}
+
 SETTINGS = {
     "model_key": "1",
     "voice_key": "1",
@@ -15,6 +20,7 @@ SETTINGS = {
     # --- НОВЫЕ ПОЛЯ ДЛЯ TELEGRAPH ---
     "telegraph_token": None,  # Токен авторизации (чтобы редактировать свои посты)
     "help_page_path": None,  # Адрес страницы (например, 'Gemini-Bot-Commands-12-08')
+    "mimic_chats": [],
     "help_page_url": None  # Полная ссылка
 }
 
@@ -29,6 +35,7 @@ def load_settings():
                     SETTINGS[k] = v
 
             if "blacklist" not in SETTINGS: SETTINGS["blacklist"] = []
+            if "mimic_chats" not in SETTINGS: SETTINGS["mimic_chats"] = []  # Гарантируем список
 
             model_info = AVAILABLE_MODELS.get(SETTINGS.get("model_key", "1"))
             print(f"⚙️ Settings Loaded. Model: {model_info['name']}")

@@ -1,10 +1,13 @@
 import asyncio
 import os
+import logging
 from pyrogram import Client, idle
 from pyrogram.errors import SessionPasswordNeeded, PasswordHashInvalid
 from src.config import API_ID, API_HASH, PHONES
-# Импортируем нашу новую функцию
 from src.services.auth_qr import login_via_qr
+
+# Логирование в консоль (чтобы видеть в journalctl)
+logging.basicConfig(level=logging.WARNING)
 
 
 async def interactive_auth(app: Client):
@@ -16,17 +19,9 @@ async def interactive_auth(app: Client):
     try:
         await app.connect()
     except Exception as e:
-        # Иногда connect падает, если файл сессии битый, пробуем удалить
-        print(f"⚠️ Ошибка подключения: {e}")
-        try:
-            if os.path.exists(f"{app.name}.session"):
-                os.remove(f"{app.name}.session")
-                print("🗑 Битый файл сессии удален. Попробуйте снова.")
-            return False
-        except:
-            return False
+        print(f"⚠️ Ошибка подключения (возможно, битая сессия): {e}")
+        return False
 
-    # 1. Проверяем, залогинены ли мы уже
     try:
         me = await app.get_me()
         print(f"✅ Сессия активна: {me.first_name}")
@@ -35,15 +30,13 @@ async def interactive_auth(app: Client):
     except Exception:
         print("👤 Требуется вход.")
 
-    # 2. Выбор метода входа
     print("-----------------------------------")
     print("Выберите метод входа:")
-    print("[Enter] - QR Код (Рекомендуется, надежно)")
-    print("[2]     - Номер телефона (СМС/Код)")
+    print("[Enter] - QR Код (Рекомендуется)")
+    print("[2]     - Номер телефона (СМС)")
     choice = input("Ваш выбор: ").strip()
 
     if choice == "2":
-        # --- СТАРЫЙ МЕТОД (СМС) ---
         try:
             print(f"📤 Отправляю код на {app.phone_number}...")
             sent = await app.send_code(app.phone_number)
@@ -71,19 +64,10 @@ async def interactive_auth(app: Client):
         print("✅ Вход по СМС успешен!")
         await app.disconnect()
         return True
-
     else:
-        # --- НОВЫЙ МЕТОД (QR) ---
-        # Вызываем функцию из сервиса
         success = await login_via_qr(app)
-
-        # Важно: login_via_qr оставляет соединение открытым или закрывает?
-        # В нашей реализации мы не делаем disconnect внутри login_via_qr в случае успеха,
-        # чтобы main.py мог корректно завершить этап.
-
         if app.is_connected:
             await app.disconnect()
-
         return success
 
 
@@ -91,14 +75,18 @@ async def main():
     if not os.path.exists("sessions"):
         os.makedirs("sessions")
 
-    # Инициализация клиентов
+    # 1. Инициализация
+    # УБРАЛИ несуществующие connection_retries и retry_delay
+    # ОСТАВИЛИ ipv6=False (это важно для RPi)
     apps = [
         Client(
             name=f"sessions/{p.strip().replace('+', '')}",
             api_id=API_ID,
             api_hash=API_HASH,
             phone_number=p.strip(),
-            plugins=dict(root="src.handlers")
+            plugins=dict(root="src.handlers"),
+            ipv6=False,  # Отключаем IPv6 (лечит зависания)
+            workdir="."
         ) for p in PHONES if p.strip()
     ]
 
@@ -107,37 +95,60 @@ async def main():
         return
 
     # ЭТАП 1: АВТОРИЗАЦИЯ
-    print("\n=== ЭТАП 1: АВТОРИЗАЦИЯ ===")
+    # (В режиме демона этот этап просто проверит файлы и пройдет дальше)
     valid_apps = []
+    print("\n=== ПРОВЕРКА СЕССИЙ ===")
     for app in apps:
-        if await interactive_auth(app):
+        if os.path.exists(f"{app.name}.session"):
             valid_apps.append(app)
         else:
-            print(f"⚠️ Скипаем {app.name} (не удалось войти)")
+            # Если запускаем руками - предложит вход.
+            # Если запускает systemd - здесь упадет ошибка ввода (EOF), скрипт перезагрузится,
+            # но это нормально, так как без сессии бот все равно не может работать.
+            try:
+                if await interactive_auth(app):
+                    valid_apps.append(app)
+            except (EOFError, OSError):
+                print(f"⚠️ {app.name}: Нет сессии и нет консоли для ввода. Пропуск.")
 
     if not valid_apps:
-        print("❌ Нет активных сессий. Бот не может быть запущен.")
-        return
+        print("❌ Нет активных сессий. Запустите вручную для входа.")
+        exit(1)
 
     # ЭТАП 2: ЗАПУСК
-    print("\n=== ЭТАП 2: ЗАПУСК БОТА ===")
+    print(f"\n=== ЗАПУСК БОТА ({len(valid_apps)} акк) ===")
     started_apps = []
+
     for app in valid_apps:
         try:
             await app.start()
             me = await app.get_me()
-            print(f"🟢 {me.first_name} онлайн и готов к работе!")
+            print(f"🟢 {me.first_name} онлайн!")
             started_apps.append(app)
         except Exception as e:
-            print(f"❌ Ошибка при старте {app.name}: {e}")
+            print(f"❌ Ошибка старта {app.name}: {e}")
 
     if started_apps:
-        print("\n🤖 Бот запущен. Нажмите Ctrl+C для остановки.")
+        print("\n🤖 Бот работает. Нажмите Ctrl+C для остановки.")
+
+        # idle() держит соединение.
+        # Если интернет пропадет, Pyrogram сам будет пытаться переподключиться.
+        # Если он не сможет и выбросит ошибку -> скрипт упадет -> Systemd его поднимет.
         await idle()
 
         for app in started_apps:
             await app.stop()
+    else:
+        print("❌ Не удалось запустить ни одного клиента.")
+        exit(1)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\n🛑 Остановка пользователем (Ctrl+C)")
+    except Exception as e:
+        print(f"\n🔥 CRITICAL ERROR: {e}")
+        # Завершаем с кодом ошибки, чтобы Systemd перезапустил службу
+        exit(1)
