@@ -1,4 +1,5 @@
-/src/sessions
+sessions
+src/sessions
 src/.env
 .venv
 .idea

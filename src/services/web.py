@@ -322,21 +322,17 @@ async def get_currency(amount, raw_from, raw_to=None):
     rates = data['conversion_rates']
     flag_from = CURRENCY_FLAGS.get(from_cur, '')
 
-    # Красивое число (10 000.50)
     fmt_amount = f"{amount:,.2f}".replace(",", " ").replace(".", ",")
 
-    # Заголовок сообщения
     res = f"💸 **Конвертация:**\n"
     res += f"{flag_from} **{fmt_amount} {from_cur}** равны:\n\n"
 
-    # Если целевая валюта не задана, берем топ популярных
     if not to_cur:
         targets = ['USD', 'EUR', 'RUB', 'UZS', 'CNY', 'KZT']
     else:
         targets = [to_cur]
 
     for t in targets:
-        # Не конвертируем в саму себя
         if t == from_cur: continue
 
         if t in rates:
@@ -344,10 +340,8 @@ async def get_currency(amount, raw_from, raw_to=None):
             flag_to = CURRENCY_FLAGS.get(t, '')
             symbol = CURRENCY_SYMBOLS.get(t, '')
 
-            # Форматирование: 1 234.56
             val_str = f"{val:,.2f}".replace(",", " ").replace(".", ",")
 
-            # Строка вида: 🇷🇺 RUB: 9 234,43 ₽
             res += f"{flag_to} {t}: **{val_str} {symbol}**\n"
 
     # Футер с датой

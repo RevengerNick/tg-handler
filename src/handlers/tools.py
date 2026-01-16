@@ -14,14 +14,13 @@ async def calc_handler(client, message):
         if len(args) < 2:
             return await edit_or_reply(message, "🔢 Введите выражение: `.cal 2+2`")
 
-        # Убираем пробелы и заменяем символы
         expr = args[1].lower().replace(" ", "")
-        expr = expr.replace("х", "*").replace("x", "*")  # Русская и англ Х
+        expr = expr.replace("х", "*").replace("x", "*")
         expr = expr.replace("^", "**")
         expr = expr.replace(":", "/")
         expr = expr.replace(",", ".")
 
-        # Безопасность
+
         if not set(expr).issubset(set("0123456789.+-*/()%**")):
             return await edit_or_reply(message, "❌ Ошибка: Недопустимые символы.")
 
@@ -41,32 +40,23 @@ async def calc_handler(client, message):
         await edit_or_reply(message, f"❌ Ошибка: {e}")
 
 
-# --- ВАЛЮТА (УЛУЧШЕННАЯ) ---
-# Добавили алиасы: .валюта, .exchange, .курс
 @Client.on_message(filters.command(["cur", "кон", "кур", "валюта", "курс", "exchange"], prefixes=".") & AccessFilter)
 async def cur_handler(client, message):
     try:
         args = message.text.split()
 
-        # Проверка на дурака (просто .cur)
         if len(args) < 3:
             return await edit_or_reply(message, "⚠️ Пример: `.валюта 100 долларов` или `.cur 50 EUR UZS`")
 
-        # Парсинг аргументов
-        # 1. Сумма (всегда второй элемент)
         try:
             amount = float(args[1].replace(",", "."))
         except ValueError:
             return await edit_or_reply(message, "⚠️ Ошибка: Сумма должна быть числом (например, 100 или 10.5)")
 
-        # 2. Исходная валюта (третий элемент)
-        # Здесь может быть "долларов", "USD", "баксов"
         raw_from = args[2]
 
-        # 3. Целевая валюта (четвертый элемент, опционально)
         raw_to = args[3] if len(args) > 3 else None
 
-        # Вызов сервиса (нормализация внутри)
         res = await get_currency(amount, raw_from, raw_to)
         await edit_or_reply(message, res)
 
@@ -270,52 +260,5 @@ async def shrek_handler(client, message):
 ⣿⣿⣿⣿⣿⣿⣿⣿⣽⣉⡉⠉⠈⠁⠄⠁⠄⠄⠄⠄⡂⠄
 ⣿⠿⣿⣿⣿⣿⣷⡤⠈⠉⠉⠁⠄⠄⠄⠄⠄⠄⠄⠠⠔⠄
 ⢿⣷⣿⣿⢿⣿⣿⣷⡦⢤⡀⠄⠄⠄⠄⠄⠄⢐⣠⡿⠁⠄
-    """
-    await edit_or_reply(message, mess)
-
-
-@Client.on_message(filters.command(["девушка", "girl"], prefixes=".") & AccessFilter)
-async def girl_handler(client, message):
-    mess = """
-⠄⠄⣿⣿⣿⣿⠘⡿⢛⣿⣿⣿⣿⣿⣧⢻⣿⣿⠃⠸⣿⣿⣿⠄⠄⠄⠄⠄
-⠄⠄⣿⣿⣿⣿⢀⠼⣛⣛⣭⢭⣟⣛⣛⣛⠿⠿⢆⡠⢿⣿⣿⠄⠄⠄⠄⠄
-⠄⠄⠸⣿⣿⢣⢶⣟⣿⣖⣿⣷⣻⣮⡿⣽⣿⣻⣖⣶⣤⣭⡉⠄⠄⠄⠄⠄
-⠄⠄⠄⢹⠣⣛⣣⣭⣭⣭⣁⡛⠻⢽⣿⣿⣿⣿⢻⣿⣿⣿⣽⡧⡄⠄⠄⠄
-⠄⠄⠄⠄⣼⣿⣿⣿⣿⣿⣿⣿⣿⣶⣌⡛⢿⣽⢘⣿⣷⣿⡻⠏⣛⣀⠄⠄
-⠄⠄⠄⣼⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣦⠙⡅⣿⠚⣡⣴⣿⣿⣿⡆⠄
-⠄⠄⣰⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⠄⣱⣾⣿⣿⣿⣿⣿⣿⠄
-⠄⢀⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⢸⣿⣿⣿⣿⣿⣿⣿⣿⠄
-⠄⣸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠣⣿⣿⣿⣿⣿⣿⣿⣿⣿⠄
-⠄⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠿⠛⠑⣿⣮⣝⣛⠿⠿⣿⣿⣿⣿⠄
-⢠⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣶⠄⠄⠄⠄⣿⣿⣿⣿⣿⣿⣿⣿⣿⡟⠄ 
-    """
-    await edit_or_reply(message, mess)
-
-
-@Client.on_message(filters.command(["дэвушка", "assgirl"], prefixes=".") & AccessFilter)
-async def assgirl_handler(client, message):
-    mess = """
-⣿⣿⣿⣿⠛⠛⠉⠄⠁⠄⠄⠉⠛⢿⣿⣿⣿⣿⣿⣿⣿
-⣿⣿⡟⠁⠄⠄⠄⠄⠄⠄⠄⠄⠄⠄⣿⣿⣿⣿⣿⣿⣿
-⣿⣿⡇⠄⠄⠄⠐⠄⠄⠄⠄⠄⠄⠄⠠⣿⣿⣿⣿⣿⣿
-⣿⣿⡇⠄⢀⡀⠠⠃⡐⡀⠠⣶⠄⠄⢀⣿⣿⣿⣿⣿⣿
-⣿⣿⣶⠄⠰⣤⣕⣿⣾⡇⠄⢛⠃⠄⢈⣿⣿⣿⣿⣿⣿
-⣿⣿⣿⡇⢀⣻⠟⣻⣿⡇⠄⠧⠄⢀⣾⣿⣿⣿⣿⣿⣿
-⣿⣿⣿⣟⢸⣻⣭⡙⢄⢀⠄⠄⠄⠈⢹⣯⣿⣿⣿⣿⣿
-⣿⣿⣿⣭⣿⣿⣿⣧⢸⠄⠄⠄⠄⠄⠈⢸⣿⣿⣿⣿⣿
-⣿⣿⣿⣼⣿⣿⣿⣽⠘⡄⠄⠄⠄⠄⢀⠸⣿⣿⣿⣿⣿
-⡿⣿⣳⣿⣿⣿⣿⣿⠄⠓⠦⠤⠤⠤⠼⢸⣿⣿⣿⣿⣿
-⡹⣧⣿⣿⣿⠿⣿⣿⣿⣿⣿⣿⣿⢇⣓⣾⣿⣿⣿⣿⣿
-⡞⣸⣿⣿⢏⣼⣶⣶⣶⣶⣤⣶⡤⠐⣿⣿⣿⣿⣿⣿⣿
-⣯⣽⣛⠅⣾⣿⣿⣿⣿⣿⡽⣿⣧⡸⢿⣿⣿⣿⣿⣿⣿
-⣿⣿⣿⡷⠹⠛⠉⠁⠄⠄⠄⠄⠄⠄⠐⠛⠻⣿⣿⣿⣿
-⣿⣿⣿⠃⠄⠄⠄⠄⠄⣠⣤⣤⣤⡄⢤⣤⣤⣤⡘⠻⣿
-⣿⣿⡟⠄⠄⣀⣤⣶⣿⣿⣿⣿⣿⣿⣆⢻⣿⣿⣿⡎⠝
-⣿⡏⠄⢀⣼⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡎⣿⣿⣿⣿⠐
-⣿⡏⣲⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⢇⣿⣿⣿⡟⣼
-⣿⡠⠜⣿⣿⣿⣿⣟⡛⠿⠿⠿⠿⠟⠃⠾⠿⢟⡋⢶⣿
-⣿⣧⣄⠙⢿⣿⣿⣿⣿⣿⣷⣦⡀⢰⣾⣿⣿⡿⢣⣿⣿
-⣿⣿⣿⠂⣷⣶⣬⣭⣭⣭⣭⣵⢰⣴⣤⣤⣶⡾⢐⣿⣿
-⣿⣿⣿⣷⡘⣿⣿⣿⣿⣿⣿⣿⢸⣿⣿⣿⣿⢃⣼⣿⣿
     """
     await edit_or_reply(message, mess)

@@ -1,9 +1,9 @@
 import asyncio
 import os
+import sys  # Нужно для exit(1)
 from pyrogram import Client, idle
 from pyrogram.errors import SessionPasswordNeeded, PasswordHashInvalid
 from src.config import API_ID, API_HASH, PHONES
-# Импортируем нашу новую функцию
 from src.services.auth_qr import login_via_qr
 
 
@@ -36,11 +36,20 @@ async def interactive_auth(app: Client):
         print("👤 Требуется вход.")
 
     # 2. Выбор метода входа
+    # ВНИМАНИЕ: Если запуск идет через Systemd (фоном), input() вызовет ошибку EOFError.
+    # Мы её поймаем в main и перезапустим скрипт, но авторизоваться можно только руками в консоли.
     print("-----------------------------------")
     print("Выберите метод входа:")
     print("[Enter] - QR Код (Рекомендуется, надежно)")
     print("[2]     - Номер телефона (СМС/Код)")
-    choice = input("Ваш выбор: ").strip()
+
+    try:
+        choice = input("Ваш выбор: ").strip()
+    except EOFError:
+        print("❌ Ошибка: Нет доступа к консоли (видимо, запуск через Systemd).")
+        print("   Запустите скрипт вручную один раз для авторизации: python -m src.main")
+        await app.disconnect()
+        return False
 
     if choice == "2":
         # --- СТАРЫЙ МЕТОД (СМС) ---
@@ -60,7 +69,8 @@ async def interactive_auth(app: Client):
             except SessionPasswordNeeded:
                 pw = input("🔑 2FA Пароль: ").strip()
                 try:
-                    await app.check_password(pw); break
+                    await app.check_password(pw);
+                    break
                 except PasswordHashInvalid:
                     print("❌ Неверный пароль.")
             except Exception as e:
@@ -74,16 +84,9 @@ async def interactive_auth(app: Client):
 
     else:
         # --- НОВЫЙ МЕТОД (QR) ---
-        # Вызываем функцию из сервиса
         success = await login_via_qr(app)
-
-        # Важно: login_via_qr оставляет соединение открытым или закрывает?
-        # В нашей реализации мы не делаем disconnect внутри login_via_qr в случае успеха,
-        # чтобы main.py мог корректно завершить этап.
-
         if app.is_connected:
             await app.disconnect()
-
         return success
 
 
@@ -98,26 +101,32 @@ async def main():
             api_id=API_ID,
             api_hash=API_HASH,
             phone_number=p.strip(),
-            plugins=dict(root="src.handlers")
+            plugins=dict(root="src.handlers"),
+            ipv6=False,  # <--- ВАЖНО: Лечит зависания сети на Raspberry Pi
+            workdir="."
         ) for p in PHONES if p.strip()
     ]
 
     if not apps:
         print("❌ Номера телефонов не найдены в .env")
-        return
+        sys.exit(1)  # Выход с ошибкой
 
     # ЭТАП 1: АВТОРИЗАЦИЯ
     print("\n=== ЭТАП 1: АВТОРИЗАЦИЯ ===")
     valid_apps = []
     for app in apps:
+        # Пытаемся авторизоваться. Если это автозапуск (systemd) и сессии нет,
+        # input() упадет, вернет False, и мы просто не добавим этот app в valid_apps.
         if await interactive_auth(app):
             valid_apps.append(app)
         else:
-            print(f"⚠️ Скипаем {app.name} (не удалось войти)")
+            print(f"⚠️ Скипаем {app.name} (не удалось войти или нет консоли)")
 
     if not valid_apps:
         print("❌ Нет активных сессий. Бот не может быть запущен.")
-        return
+        # Завершаем с кодом 1, чтобы Systemd увидел ошибку, но не спамил рестартами,
+        # если проблема в отсутствии сессии, лучше запустить руками.
+        sys.exit(1)
 
     # ЭТАП 2: ЗАПУСК
     print("\n=== ЭТАП 2: ЗАПУСК БОТА ===")
@@ -133,11 +142,24 @@ async def main():
 
     if started_apps:
         print("\n🤖 Бот запущен. Нажмите Ctrl+C для остановки.")
+
+        # Если здесь произойдет разрыв соединения, idle() выбросит исключение
         await idle()
 
         for app in started_apps:
             await app.stop()
+    else:
+        print("❌ Ни один клиент не запустился.")
+        sys.exit(1)  # Перезапуск
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\n🛑 Остановка пользователем")
+    except Exception as e:
+        print(f"\n🔥 КРИТИЧЕСКАЯ ОШИБКА: {e}")
+        # Самое важное: выходим с кодом 1.
+        # Systemd увидит это и выполнит Restart=always
+        sys.exit(1)
