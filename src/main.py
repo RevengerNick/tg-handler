@@ -8,15 +8,11 @@ from src.services.auth_qr import login_via_qr
 
 
 async def interactive_auth(app: Client):
-    """
-    Интерактивная проверка авторизации (QR или СМС).
-    """
     print(f"\n🔄 Проверка сессии для: {app.name}")
 
     try:
         await app.connect()
     except Exception as e:
-        # Иногда connect падает, если файл сессии битый, пробуем удалить
         print(f"⚠️ Ошибка подключения: {e}")
         try:
             if os.path.exists(f"{app.name}.session"):
@@ -26,7 +22,6 @@ async def interactive_auth(app: Client):
         except:
             return False
 
-    # 1. Проверяем, залогинены ли мы уже
     try:
         me = await app.get_me()
         print(f"✅ Сессия активна: {me.first_name}")
@@ -43,7 +38,6 @@ async def interactive_auth(app: Client):
     choice = input("Ваш выбор: ").strip()
 
     if choice == "2":
-        # --- СТАРЫЙ МЕТОД (СМС) ---
         try:
             print(f"📤 Отправляю код на {app.phone_number}...")
             sent = await app.send_code(app.phone_number)
@@ -73,13 +67,7 @@ async def interactive_auth(app: Client):
         return True
 
     else:
-        # --- НОВЫЙ МЕТОД (QR) ---
-        # Вызываем функцию из сервиса
         success = await login_via_qr(app)
-
-        # Важно: login_via_qr оставляет соединение открытым или закрывает?
-        # В нашей реализации мы не делаем disconnect внутри login_via_qr в случае успеха,
-        # чтобы main.py мог корректно завершить этап.
 
         if app.is_connected:
             await app.disconnect()
@@ -88,8 +76,8 @@ async def interactive_auth(app: Client):
 
 
 async def main():
-    if not os.path.exists("sessions"):
-        os.makedirs("sessions")
+    if not os.path.exists("src/sessions"):
+        os.makedirs("src/sessions")
 
     # Инициализация клиентов
     apps = [
@@ -106,7 +94,6 @@ async def main():
         print("❌ Номера телефонов не найдены в .env")
         return
 
-    # ЭТАП 1: АВТОРИЗАЦИЯ
     print("\n=== ЭТАП 1: АВТОРИЗАЦИЯ ===")
     valid_apps = []
     for app in apps:
@@ -119,7 +106,6 @@ async def main():
         print("❌ Нет активных сессий. Бот не может быть запущен.")
         return
 
-    # ЭТАП 2: ЗАПУСК
     print("\n=== ЭТАП 2: ЗАПУСК БОТА ===")
     started_apps = []
     for app in valid_apps:
