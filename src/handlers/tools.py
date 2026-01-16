@@ -20,7 +20,7 @@ async def calc_handler(client, message):
         expr = expr.replace(":", "/")
         expr = expr.replace(",", ".")
 
-        # Безопасность
+
         if not set(expr).issubset(set("0123456789.+-*/()%**")):
             return await edit_or_reply(message, "❌ Ошибка: Недопустимые символы.")
 
