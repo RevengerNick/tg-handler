@@ -1,11 +1,18 @@
 import asyncio
 import os
 import sys  # Нужно для exit(1)
+from threading import Thread
+
+import uvicorn
 from pyrogram import Client, idle
 from pyrogram.errors import SessionPasswordNeeded, PasswordHashInvalid
 from src.config import API_ID, API_HASH, PHONES
 from src.services.auth_qr import login_via_qr
+from src.web_server import app as web_app
 
+def run_web_server():
+    """Запуск сервера на 0.0.0.0 для доступа из Docker-сети Cloudflare"""
+    uvicorn.run(web_app, host="0.0.0.0", port=8111, log_level="error")
 
 async def interactive_auth(app: Client):
     """
@@ -69,13 +76,13 @@ async def interactive_auth(app: Client):
             except SessionPasswordNeeded:
                 pw = input("🔑 2FA Пароль: ").strip()
                 try:
-                    await app.check_password(pw);
+                    await app.check_password(pw)
                     break
                 except PasswordHashInvalid:
                     print("❌ Неверный пароль.")
             except Exception as e:
-                print(f"❌ Ошибка: {e}");
-                await app.disconnect();
+                print(f"❌ Ошибка: {e}")
+                await app.disconnect()
                 return False
 
         print("✅ Вход по СМС успешен!")
@@ -94,6 +101,8 @@ async def main():
     if not os.path.exists("sessions"):
         os.makedirs("sessions")
 
+    Thread(target=run_web_server, daemon=True).start()
+    print("🌐 Локальный веб-сервер запущен на порту 8000")
     # Инициализация клиентов
     apps = [
         Client(

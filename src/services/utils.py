@@ -1,7 +1,7 @@
 import asyncio
 import time
+from src.services.local_web import save_to_local_web
 
-from src.services.web import create_telegraph_page
 
 
 # --- TEXT UTILS ---
@@ -54,12 +54,11 @@ async def smart_reply(message, text, title="AI Response", use_markdown=True):
                 await message.edit("📝 Ответ длинный, создаю статью...")
 
             # Функция из services/web.py
-            link = await create_telegraph_page(title, text)
+            link = await save_to_local_web(title, text)
 
             final_text = f"📝 **{title} (Longread):**\n👉 {link}"
             await edit_or_reply(message, final_text)
         else:
-            # disable_web_page_preview=True чтобы ссылки источников не создавали мусор
             await edit_or_reply(message, text, disable_web_page_preview=True)
     except Exception as e:
         await edit_or_reply(message, f"SmartSend Err: {e}")
@@ -108,7 +107,7 @@ async def handle_stream_output(client, message, stream_generator, title="AI Resp
         # --- ФИНАЛ ---
         if is_telegraph_mode:
             # Создаем статью
-            link = await create_telegraph_page(title, full_text)
+            link = await save_to_local_web(title, full_text)
             final_view = f"{header}\n\n📝 **{title} (Longread):**\n👉 {link}"
             await current_msg.edit(final_view)
         else:

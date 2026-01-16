@@ -9,7 +9,8 @@ from .audio import generate_gemini_tts, generate_multispeaker_tts, convert_wav_t
 from .speech import transcribe_via_gemini
 
 # Веб и Медиа
-from .web import create_telegraph_page, update_help_page, olx_parser, get_currency, get_sys_info
+from .local_web import save_to_local_web
+from .web import update_help_page, olx_parser, get_currency, get_sys_info
 from .media import download_video, download_yandex_track
 
 from .analytics import analyze_chat_history

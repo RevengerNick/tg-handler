@@ -3,8 +3,8 @@ from pyrogram import Client, filters
 from src.services import (
     edit_or_reply, smart_reply, get_message_context,
     ask_gemini_oneshot, ask_gemini_chat, generate_gemini_tts,
-    convert_wav_to_ogg, transcribe_via_gemini, generate_multispeaker_tts, create_telegraph_page,
-    generate_imagen, generate_flux, get_gemini_stream  # <-- Добавил
+    convert_wav_to_ogg, transcribe_via_gemini, generate_multispeaker_tts,
+    generate_imagen, generate_flux, get_gemini_stream, save_to_local_web  # <-- Добавил
 )
 from src.services.utils import handle_stream_output
 from src.state import SETTINGS, ASYNC_CHAT_SESSIONS
@@ -93,7 +93,7 @@ async def ait_handler(client, message):
         resp = await ask_gemini_oneshot(content)
 
         # Всегда Telegraph
-        link = await create_telegraph_page(f"AI: {prompt[:30]}", resp)
+        link = await save_to_local_web(f"AI: {prompt[:30]}", resp)
         await status.edit(f"🧠 **Gemini ({m_name}):**\n📄 **Статья готова:**\n👉 {link}", disable_web_page_preview=False)
     except Exception as e:
         await edit_or_reply(message, f"Err: {e}")
@@ -114,7 +114,7 @@ async def chatt_handler(client, message):
 
         resp = await ask_gemini_chat(message.chat.id, content)
 
-        link = await create_telegraph_page(f"Context: {prompt[:20]}...", resp)
+        link = await save_to_local_web(f"Context: {prompt[:20]}...", resp)
         await status.edit(f"💬📝 **Ответ (Telegraph):**\n👉 {link}")
     except Exception as e:
         await edit_or_reply(message, f"Err: {e}")

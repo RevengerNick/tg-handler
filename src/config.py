@@ -18,6 +18,8 @@ YANDEX_TOKEN = os.getenv("YANDEX_TOKEN")
 EXCHANGE_KEY = os.getenv("EXCHANGE_API_KEY")
 SETTINGS_FILE = "settings.json"
 
+INSTANT_VIEW_RHASH = os.getenv("RHASH", "")
+
 IMAGEN_MODEL = "imagen-3.0-generate-001"
 
 STOP_WORDS = {

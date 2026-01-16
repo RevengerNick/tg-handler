@@ -143,34 +143,34 @@ async def update_help_page(title, markdown_text):
     return await asyncio.to_thread(_sync_action)
 
 
-async def create_telegraph_page(title, markdown_text):
-    """
-    Создает НОВУЮ статью (для .ait и .chatt).
-    """
-
-    def _sync_upload():
-        try:
-            html_content = markdown.markdown(markdown_text, extensions=['fenced_code', 'tables'])
-            html_content = html_content.replace("\n", "<br>")
-            # ВАЖНО: Убираем запрещенные теги
-            html_content = sanitize_html_for_telegraph(html_content)
-
-            for attempt in range(3):
-                try:
-                    response = telegraph_client.create_page(
-                        title=title,
-                        html_content=html_content,
-                        author_name="Gemini Bot"
-                    )
-                    return response['url']
-                except Exception as e:
-                    print(f"Telegraph attempt {attempt} error: {e}")
-                    time.sleep(2)
-            return "Error: Timeout"
-        except Exception as e:
-            return f"Error: {e}"
-
-    return await asyncio.to_thread(_sync_upload)
+# async def create_telegraph_page(title, markdown_text):
+#     """
+#     Создает НОВУЮ статью (для .ait и .chatt).
+#     """
+#
+#     def _sync_upload():
+#         try:
+#             html_content = markdown.markdown(markdown_text, extensions=['fenced_code', 'tables'])
+#             html_content = html_content.replace("\n", "<br>")
+#             # ВАЖНО: Убираем запрещенные теги
+#             html_content = sanitize_html_for_telegraph(html_content)
+#
+#             for attempt in range(3):
+#                 try:
+#                     response = telegraph_client.create_page(
+#                         title=title,
+#                         html_content=html_content,
+#                         author_name="Gemini Bot"
+#                     )
+#                     return response['url']
+#                 except Exception as e:
+#                     print(f"Telegraph attempt {attempt} error: {e}")
+#                     time.sleep(2)
+#             return "Error: Timeout"
+#         except Exception as e:
+#             return f"Error: {e}"
+#
+#     return await asyncio.to_thread(_sync_upload)
 
 
 async def olx_parser(query: str, max_pages: int = 1, with_images: bool = True):
