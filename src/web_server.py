@@ -6,6 +6,7 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from urllib.parse import quote
 from pydantic import BaseModel
 import uuid
 import datetime
@@ -20,6 +21,9 @@ STATIC_DIR = os.path.join(BASE_DIR, "static")
 TEMPLATES_DIR = os.path.join(BASE_DIR, "src", "templates")
 DB_PATH = os.path.join(BASE_DIR, "database.db")
 
+MY_DOMAIN = os.getenv("MY_DOMAIN", "https://telegraph.revenger.dev")
+# Твой RHash для Instant View
+INSTANT_VIEW_RHASH = os.getenv("IV_RHASH", "fdaa3d91fdb6eb")
 class ArticleModel(BaseModel):
     title: str
     content: str
@@ -59,9 +63,9 @@ except Exception as e:
 # --- РОУТЫ ---
 @app.post("/api/create")
 async def create_article(article: ArticleModel):
-    """API для создания статьи ботом"""
-    article_id = str(uuid.uuid4())[:8]  # Генерируем короткий ID
-    date_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    """Создание статьи и возврат IV ссылки"""
+    article_id = str(uuid.uuid4())[:8]
+    date_str = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
 
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -72,8 +76,17 @@ async def create_article(article: ArticleModel):
     conn.commit()
     conn.close()
 
-    # Возвращаем боту ID новой статьи
-    return {"status": "ok", "id": article_id, "url": f"/view/{article_id}"}
+    # 1. Формируем прямую ссылку на статью
+    # Важно: убедись, что MY_DOMAIN без слеша в конце
+    raw_url = f"{MY_DOMAIN}/view/{article_id}"
+
+    # 2. Кодируем её для Telegram
+    encoded_url = quote(raw_url, safe='')
+
+    # 3. Собираем финальную ссылку Instant View
+    iv_link = f"https://t.me/iv?url={encoded_url}&rhash={INSTANT_VIEW_RHASH}"
+
+    return {"status": "ok", "id": article_id, "url": iv_link}
 @app.get("/", response_class=HTMLResponse)
 async def index():
     """Главная страница (заглушка)"""
