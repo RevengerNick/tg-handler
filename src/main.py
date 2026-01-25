@@ -12,7 +12,7 @@ from src.web_server import app as web_app
 
 def run_web_server():
     """Запуск сервера на 0.0.0.0 для доступа из Docker-сети Cloudflare"""
-    uvicorn.run(web_app, host="0.0.0.0", port=8111, log_level="error")
+    uvicorn.run(web_app, host="0.0.0.0", port=8112, log_level="error")
 
 
 async def interactive_auth(app: Client):
