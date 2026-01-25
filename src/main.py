@@ -1,8 +1,7 @@
 import asyncio
 import os
-import sys  # Нужно для exit(1)
+import sys
 from threading import Thread
-
 import uvicorn
 from pyrogram import Client, idle
 from pyrogram.errors import SessionPasswordNeeded, PasswordHashInvalid
@@ -10,41 +9,42 @@ from src.config import API_ID, API_HASH, PHONES
 from src.services.auth_qr import login_via_qr
 from src.web_server import app as web_app
 
+
 def run_web_server():
     """Запуск сервера на 0.0.0.0 для доступа из Docker-сети Cloudflare"""
     uvicorn.run(web_app, host="0.0.0.0", port=8111, log_level="error")
+
 
 async def interactive_auth(app: Client):
     """
     Интерактивная проверка авторизации (QR или СМС).
     """
+    session_path = f"{app.workdir}/{app.name}.session"
+
     print(f"\n🔄 Проверка сессии для: {app.name}")
+    print(f"📂 Путь к сессии: {session_path}")
 
-    try:
-        await app.connect()
-    except Exception as e:
-        # Иногда connect падает, если файл сессии битый, пробуем удалить
-        print(f"⚠️ Ошибка подключения: {e}")
+    # Проверяем существует ли файл сессии
+    if os.path.exists(session_path):
+        print(f"✅ Файл сессии найден")
         try:
-            if os.path.exists(f"{app.name}.session"):
-                os.remove(f"{app.name}.session")
-                print("🗑 Битый файл сессии удален. Попробуйте снова.")
-            return False
-        except:
-            return False
+            await app.connect()
+            me = await app.get_me()
+            print(f"✅ Сессия активна: {me.first_name}")
+            await app.disconnect()
+            return True
+        except Exception as e:
+            print(f"⚠️ Сессия невалидна ({e}), требуется повторный вход")
+            try:
+                os.remove(session_path)
+                print("🗑 Битый файл сессии удален")
+            except:
+                pass
+    else:
+        print(f"❌ Файл сессии не найден")
 
-    # 1. Проверяем, залогинены ли мы уже
-    try:
-        me = await app.get_me()
-        print(f"✅ Сессия активна: {me.first_name}")
-        await app.disconnect()
-        return True
-    except Exception:
-        print("👤 Требуется вход.")
-
-    # 2. Выбор метода входа
-    # ВНИМАНИЕ: Если запуск идет через Systemd (фоном), input() вызовет ошибку EOFError.
-    # Мы её поймаем в main и перезапустим скрипт, но авторизоваться можно только руками в консоли.
+    # Нужен новый вход
+    print("👤 Требуется авторизация.")
     print("-----------------------------------")
     print("Выберите метод входа:")
     print("[Enter] - QR Код (Рекомендуется, надежно)")
@@ -55,45 +55,50 @@ async def interactive_auth(app: Client):
     except EOFError:
         print("❌ Ошибка: Нет доступа к консоли (видимо, запуск через Systemd).")
         print("   Запустите скрипт вручную один раз для авторизации: python -m src.main")
-        await app.disconnect()
         return False
 
     if choice == "2":
-        # --- СТАРЫЙ МЕТОД (СМС) ---
+        # Вход по СМС
         try:
+            if not app.is_connected:
+                await app.connect()
+
             print(f"📤 Отправляю код на {app.phone_number}...")
             sent = await app.send_code(app.phone_number)
         except Exception as e:
             print(f"❌ Ошибка отправки кода: {e}")
-            await app.disconnect()
+            if app.is_connected:
+                await app.disconnect()
             return False
 
         while True:
             code = input(f"📩 Введите код: ").strip()
             try:
                 await app.sign_in(app.phone_number, sent.phone_code_hash, code)
+                print("✅ Вход по СМС успешен!")
                 break
             except SessionPasswordNeeded:
                 pw = input("🔑 2FA Пароль: ").strip()
                 try:
                     await app.check_password(pw)
+                    print("✅ 2FA пройдена!")
                     break
                 except PasswordHashInvalid:
-                    print("❌ Неверный пароль.")
+                    print("❌ Неверный пароль. Попробуйте снова.")
             except Exception as e:
-                print(f"❌ Ошибка: {e}")
-                await app.disconnect()
+                print(f"❌ Ошибка входа: {e}")
+                if app.is_connected:
+                    await app.disconnect()
                 return False
 
-        print("✅ Вход по СМС успешен!")
-        await app.disconnect()
-        return True
-
-    else:
-        # --- НОВЫЙ МЕТОД (QR) ---
-        success = await login_via_qr(app)
+        # Отключаемся после успешного входа
         if app.is_connected:
             await app.disconnect()
+        return True
+    else:
+        # Вход по QR
+        success = await login_via_qr(app)
+        # login_via_qr уже отключает клиент
         return success
 
 
@@ -102,8 +107,8 @@ async def main():
         os.makedirs("sessions")
 
     Thread(target=run_web_server, daemon=True).start()
-    print("🌐 Локальный веб-сервер запущен на порту 8000")
-    # Инициализация клиентов
+    print("🌐 Локальный веб-сервер запущен на порту 8111")
+
     apps = [
         Client(
             name=f"sessions/{p.strip().replace('+', '')}",
@@ -111,33 +116,28 @@ async def main():
             api_hash=API_HASH,
             phone_number=p.strip(),
             plugins=dict(root="src.handlers"),
-            ipv6=False,  # <--- ВАЖНО: Лечит зависания сети на Raspberry Pi
+            ipv6=False,
             workdir="."
         ) for p in PHONES if p.strip()
     ]
 
     if not apps:
         print("❌ Номера телефонов не найдены в .env")
-        sys.exit(1)  # Выход с ошибкой
+        sys.exit(1)
 
-    # ЭТАП 1: АВТОРИЗАЦИЯ
     print("\n=== ЭТАП 1: АВТОРИЗАЦИЯ ===")
     valid_apps = []
     for app in apps:
-        # Пытаемся авторизоваться. Если это автозапуск (systemd) и сессии нет,
-        # input() упадет, вернет False, и мы просто не добавим этот app в valid_apps.
         if await interactive_auth(app):
             valid_apps.append(app)
+            print(f"✅ {app.name} готов к запуску\n")
         else:
-            print(f"⚠️ Скипаем {app.name} (не удалось войти или нет консоли)")
+            print(f"⚠️ Скипаем {app.name} (не удалось войти)\n")
 
     if not valid_apps:
         print("❌ Нет активных сессий. Бот не может быть запущен.")
-        # Завершаем с кодом 1, чтобы Systemd увидел ошибку, но не спамил рестартами,
-        # если проблема в отсутствии сессии, лучше запустить руками.
         sys.exit(1)
 
-    # ЭТАП 2: ЗАПУСК
     print("\n=== ЭТАП 2: ЗАПУСК БОТА ===")
     started_apps = []
     for app in valid_apps:
@@ -151,15 +151,12 @@ async def main():
 
     if started_apps:
         print("\n🤖 Бот запущен. Нажмите Ctrl+C для остановки.")
-
-        # Если здесь произойдет разрыв соединения, idle() выбросит исключение
         await idle()
-
         for app in started_apps:
             await app.stop()
     else:
         print("❌ Ни один клиент не запустился.")
-        sys.exit(1)  # Перезапуск
+        sys.exit(1)
 
 
 if __name__ == "__main__":
@@ -169,6 +166,4 @@ if __name__ == "__main__":
         print("\n🛑 Остановка пользователем")
     except Exception as e:
         print(f"\n🔥 КРИТИЧЕСКАЯ ОШИБКА: {e}")
-        # Самое важное: выходим с кодом 1.
-        # Systemd увидит это и выполнит Restart=always
         sys.exit(1)

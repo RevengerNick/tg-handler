@@ -6,7 +6,9 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-
+from pydantic import BaseModel
+import uuid
+import datetime
 # Инициализация FastAPI
 app = FastAPI()
 
@@ -17,6 +19,10 @@ BASE_DIR = os.getcwd()
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 TEMPLATES_DIR = os.path.join(BASE_DIR, "src", "templates")
 DB_PATH = os.path.join(BASE_DIR, "database.db")
+
+class ArticleModel(BaseModel):
+    title: str
+    content: str
 
 # Создаем папки, если их нет
 if not os.path.exists(STATIC_DIR):
@@ -51,7 +57,23 @@ except Exception as e:
 
 
 # --- РОУТЫ ---
+@app.post("/api/create")
+async def create_article(article: ArticleModel):
+    """API для создания статьи ботом"""
+    article_id = str(uuid.uuid4())[:8]  # Генерируем короткий ID
+    date_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO articles (id, title, content, date) VALUES (?, ?, ?, ?)",
+        (article_id, article.title, article.content, date_str)
+    )
+    conn.commit()
+    conn.close()
+
+    # Возвращаем боту ID новой статьи
+    return {"status": "ok", "id": article_id, "url": f"/view/{article_id}"}
 @app.get("/", response_class=HTMLResponse)
 async def index():
     """Главная страница (заглушка)"""
