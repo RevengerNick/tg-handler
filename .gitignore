@@ -3,3 +3,7 @@ src/.env
 .venv
 .idea
 settings.json
+**/__pycache__
+**/*.pyc
+**/*.session
+**/*.db
