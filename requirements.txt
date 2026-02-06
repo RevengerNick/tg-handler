@@ -15,3 +15,7 @@ telegraph
 markdown
 requests
 qrcode
+fastapi
+uvicorn
+jinja2
+aiofiles

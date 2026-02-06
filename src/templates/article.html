@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta property="og:type" content="article">
+    <meta property="og:title" content="{{ title }}">
+    <meta property="og:description" content="{{ description }}">
+    <meta property="og:site_name" content="Gemini Node">
+    <title>{{ title }}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        article h1 {
+            @apply text-4xl font-bold mb-6;
+        }
+
+        article h2 {
+            @apply text-2xl font-semibold mt-8 mb-4 border-b pb-2;
+        }
+
+        article h3 {
+            @apply text-xl font-medium mt-6 mb-3 text-gray-700;
+        }
+
+        article p {
+            @apply mb-4 leading-relaxed text-gray-800 text-lg;
+        }
+
+        article code {
+            @apply bg-gray-100 px-1.5 py-0.5 rounded text-red-600 font-mono text-sm;
+        }
+
+        article pre {
+            @apply bg-gray-900 text-gray-100 p-5 rounded-xl overflow-x-auto mb-6 shadow-lg;
+        }
+
+        article pre code {
+            @apply bg-transparent p-0 text-gray-100;
+        }
+
+        article table {
+            @apply w-full border-collapse mb-6 border border-gray-200;
+        }
+
+        article th {
+            @apply bg-gray-50 border border-gray-200 p-3 text-left font-bold;
+        }
+
+        article td {
+            @apply border border-gray-200 p-3 text-left;
+        }
+
+        article blockquote {
+            @apply border-l-4 border-blue-500 pl-4 italic text-gray-600 my-6;
+        }
+
+        article img {
+            @apply rounded-xl shadow-md mx-auto my-8;
+        }
+    </style>
+</head>
+
+<body class="bg-slate-50 text-gray-900 antialiased font-sans">
+    <div class="max-w-3xl mx-auto px-4 sm:px-6 py-12 bg-white shadow-sm min-h-screen">
+        <header class="mb-10 border-b border-gray-100 pb-8">
+            <h1 class="text-3xl sm:text-5xl font-black tracking-tight text-gray-900 mb-4">{{ title }}</h1>
+            <div class="flex items-center text-sm text-gray-500 space-x-2">
+                <span class="bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-medium">Gemini Report</span>
+                <span>•</span>
+                <time>{{ date }}</time>
+            </div>
+        </header>
+        <article class="prose prose-slate max-w-none">
+            {{ content | safe }}
+        </article>
+        <footer class="mt-20 pt-10 border-t border-gray-100 text-center">
+            <p class="text-xs text-gray-300 mt-2">ID: {{ article_id }}</p>
+        </footer>
+    </div>
+</body>
+
+</html>

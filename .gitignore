@@ -7,3 +7,6 @@ settings.json
 **/*.pyc
 **/*.session
 **/*.db
+.vscode
+.env    
+.python-version
