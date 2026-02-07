@@ -3,12 +3,29 @@ import uuid
 import os
 from datetime import datetime
 from urllib.parse import quote
-from src.config import INSTANT_VIEW_RHASH, MY_DOMAIN
+from src.config import INSTANT_VIEW_RHASH, MY_DOMAIN, ROOT_DIR
 
-DB_PATH = os.path.join(os.getcwd(), "database.db")
+DB_PATH = os.path.join(ROOT_DIR, "database.db")
+ 
+def init_db():
+    """Инициализирует таблицу articles, если она не существует"""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        cursor = conn.cursor()
+        cursor.execute('''CREATE TABLE IF NOT EXISTS articles
+                        (
+                            id TEXT PRIMARY KEY,
+                            title TEXT,
+                            content TEXT,
+                            date TEXT
+                        )''')
+        conn.commit()
+    finally:
+        conn.close()
 
 async def save_to_local_web(title, markdown_text):
     """Сохраняет статью в локальную БД и возвращает ссылку с Instant View"""
+    init_db()
     article_id = str(uuid.uuid4())[:8]
     date_str = datetime.now().strftime("%d.%m.%Y %H:%M")
     
