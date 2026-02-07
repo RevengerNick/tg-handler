@@ -3,8 +3,9 @@ import os
 import aiohttp
 from pyrogram import Client, idle
 from pyrogram.errors import SessionPasswordNeeded, PasswordHashInvalid
-from src.config import API_ID, API_HASH, PHONES
+from src.config import API_ID, API_HASH, PHONES, MY_DOMAIN
 from src.services.auth_qr import login_via_qr
+import uvicorn
 
 
 # ============== МОНИТОРИНГ СОЕДИНЕНИЯ ==============
@@ -149,76 +150,108 @@ async def interactive_auth(app: Client):
         return success
 
 
+# ============== WEB SERVER ==============
+
+async def start_web_server():
+    """Запуск FastAPI сервера в фоне."""
+    from src.web_server import app
+    
+    # Извлекаем порт из MY_DOMAIN (напр. http://localhost:8112 -> 8112)
+    port = 8112
+    try:
+        if ":" in MY_DOMAIN.replace("://", ""):
+            port = int(MY_DOMAIN.split(":")[-1].split("/")[0])
+    except:
+        pass
+
+    print(f"🌐 Запуск веб-сервера на порту {port}...")
+    config = uvicorn.Config(app, host="0.0.0.0", port=port, log_level="error")
+    server = uvicorn.Server(config)
+    await server.serve()
+
+
 # ============== MAIN ==============
 
 async def main():
-    if not os.path.exists("sessions"):
-        os.makedirs("sessions")
+    # ЭТАП 0: ЗАПУСК ВЕБ-СЕРВЕРА
+    web_task = asyncio.create_task(start_web_server())
 
-    # Инициализация клиентов
-    apps = [
-        Client(
-            name=f"sessions/{p.strip().replace('+', '')}",
-            api_id=API_ID,
-            api_hash=API_HASH,
-            phone_number=p.strip(),
-            plugins=dict(root="src.handlers")
-        ) for p in PHONES if p.strip()
-    ]
+    try:
+        if not os.path.exists("sessions"):
+            os.makedirs("sessions")
 
-    if not apps:
-        print("❌ Номера телефонов не найдены в .env")
-        return
+        # Инициализация клиентов
+        apps = [
+            Client(
+                name=f"sessions/{p.strip().replace('+', '')}",
+                api_id=API_ID,
+                api_hash=API_HASH,
+                phone_number=p.strip(),
+                plugins=dict(root="src.handlers")
+            ) for p in PHONES if p.strip()
+        ]
 
-    # Проверяем интернет перед стартом
-    if not await check_internet():
-        print("⚠️ Нет интернета при старте!")
-        if not await wait_for_internet(max_wait=60):
-            print("❌ Нет интернета. Запустите скрипт позже.")
+        if not apps:
+            print("❌ Номера телефонов не найдены в .env")
             return
 
-    # ЭТАП 1: АВТОРИЗАЦИЯ
-    print("\n=== ЭТАП 1: АВТОРИЗАЦИЯ ===")
-    valid_apps = []
-    for app in apps:
-        if await interactive_auth(app):
-            valid_apps.append(app)
-        else:
-            print(f"⚠️ Скипаем {app.name} (не удалось войти)")
+        # Проверяем интернет перед стартом
+        if not await check_internet():
+            print("⚠️ Нет интернета при старте!")
+            if not await wait_for_internet(max_wait=60):
+                print("❌ Нет интернета. Запустите скрипт позже.")
+                return
 
-    if not valid_apps:
-        print("❌ Нет активных сессий. Бот не может быть запущен.")
-        return
+        # ЭТАП 1: АВТОРИЗАЦИЯ
+        print("\n=== ЭТАП 1: АВТОРИЗАЦИЯ ===")
+        valid_apps = []
+        for app in apps:
+            if await interactive_auth(app):
+                valid_apps.append(app)
+            else:
+                print(f"⚠️ Скипаем {app.name} (не удалось войти)")
 
-    # ЭТАП 2: ЗАПУСК
-    print("\n=== ЭТАП 2: ЗАПУСК БОТА ===")
-    started_apps = []
-    for app in valid_apps:
-        try:
-            await app.start()
-            me = await app.get_me()
-            print(f"🟢 {me.first_name} онлайн и готов к работе!")
-            started_apps.append(app)
-        except Exception as e:
-            print(f"❌ Ошибка при старте {app.name}: {e}")
+        if not valid_apps:
+            print("❌ Нет активных сессий. Бот не может быть запущен.")
+            return
 
-    if started_apps:
-        print("\n🤖 Бот запущен. Нажмите Ctrl+C для остановки.")
-        
-        # Запускаем мониторинг как ФОНОВУЮ задачу (не блокирует хендлеры!)
-        monitor_task = asyncio.create_task(keep_alive_monitor(started_apps, interval=30))
-        
-        try:
-            await idle()  # Это главный цикл Pyrogram для сообщений
-        finally:
-            monitor_task.cancel()
+        # ЭТАП 2: ЗАПУСК
+        print("\n=== ЭТАП 2: ЗАПУСК БОТА ===")
+        started_apps = []
+        for app in valid_apps:
             try:
-                await monitor_task
-            except asyncio.CancelledError:
-                pass
+                await app.start()
+                me = await app.get_me()
+                print(f"🟢 {me.first_name} онлайн и готов к работе!")
+                started_apps.append(app)
+            except Exception as e:
+                print(f"❌ Ошибка при старте {app.name}: {e}")
+
+        if started_apps:
+            print("\n🤖 Бот запущен. Нажмите Ctrl+C для остановки.")
             
-            for app in started_apps:
-                await app.stop()
+            # Запускаем мониторинг как ФОНОВУЮ задачу
+            monitor_task = asyncio.create_task(keep_alive_monitor(started_apps, interval=30))
+            
+            try:
+                await idle()  # Это главный цикл Pyrogram для сообщений
+            finally:
+                monitor_task.cancel()
+                try:
+                    await monitor_task
+                except asyncio.CancelledError:
+                    pass
+                
+                for app in started_apps:
+                    await app.stop()
+
+    finally:
+        # Останавливаем веб-сервер при выходе из main
+        web_task.cancel()
+        try:
+            await web_task
+        except asyncio.CancelledError:
+            pass
 
 
 if __name__ == "__main__":
