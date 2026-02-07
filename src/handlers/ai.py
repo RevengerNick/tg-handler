@@ -78,6 +78,55 @@ async def chat_handler(client, message):
         await edit_or_reply(message, f"Err: {e}")
 
 
+def parse_ai_response_with_title(raw_response: str) -> tuple:
+    """
+    Парсит ответ AI, ожидая формат:
+    TITLE: [заголовок]
+    CONTENT:
+    [основной текст]
+    
+    Возвращает (title, content) или (fallback_title, full_response) при ошибке парсинга.
+    """
+    try:
+        lines = raw_response.strip().split('\n')
+        title = None
+        content_start = 0
+        
+        # Ищем TITLE: в первых 5 строках
+        for i, line in enumerate(lines[:5]):
+            if line.strip().upper().startswith('TITLE:'):
+                title = line.split(':', 1)[1].strip()
+                # Ищем CONTENT: после TITLE
+                for j in range(i + 1, min(i + 3, len(lines))):
+                    if lines[j].strip().upper().startswith('CONTENT:'):
+                        content_start = j + 1
+                        break
+                if content_start == 0:
+                    content_start = i + 1
+                break
+        
+        if title:
+            # Очищаем заголовок
+            title = title.strip().strip('"').strip("'")
+            if len(title) > 80:
+                title = title[:77] + "..."
+            content = '\n'.join(lines[content_start:]).strip()
+            return title, content
+        
+        # Fallback: берём первую непустую строку как заголовок
+        for line in lines:
+            stripped = line.strip()
+            if stripped and len(stripped) > 5:
+                title = stripped[:60] if len(stripped) > 60 else stripped
+                # Убираем markdown заголовки
+                title = title.lstrip('#').strip()
+                return title, raw_response.strip()
+        
+        return "Статья", raw_response.strip()
+    except Exception:
+        return "Статья", raw_response.strip()
+
+
 @Client.on_message(filters.command(["ait", "аит"], prefixes=".") & AccessFilter)
 async def ait_handler(client, message):
     try:
@@ -88,14 +137,36 @@ async def ait_handler(client, message):
         m_name = AVAILABLE_MODELS[SETTINGS.get("model_key", "1")]["name"]
         status = await edit_or_reply(message, f"📝 {m_name} пишет статью...")
 
-        final = f"{reply_txt}\nЗадание: {prompt}"
-        content = [reply_img, final] if reply_img else final
+        # Один запрос: просим сгенерировать и заголовок, и контент
+        enhanced_prompt = (
+            f"{reply_txt}\n\n" if reply_txt else ""
+        ) + (
+            f"Задание: {prompt}\n\n"
+            "ВАЖНО: Ответь в следующем формате (без изменений):\n"
+            "TITLE: [короткий ёмкий заголовок статьи, максимум 60 символов]\n"
+            "CONTENT:\n"
+            "[твой подробный ответ здесь]"
+        )
+        
+        content_input = [reply_img, enhanced_prompt] if reply_img else enhanced_prompt
+        
+        raw_resp = await ask_gemini_oneshot(content_input)
+        
+        # Парсим ответ на заголовок и контент
+        article_title, article_content = parse_ai_response_with_title(raw_resp)
+        
+        # Форматируем контент: Заголовок → Вопрос → Ответ
+        full_content = (
+            f"# {article_title}\n\n"
+            f"## Вопрос\n\n"
+            f"{prompt}\n\n"
+            f"---\n\n"
+            f"## Ответ\n\n"
+            f"{article_content}"
+        )
 
-        resp = await ask_gemini_oneshot(content)
-
-        # Всегда Telegraph
-        link = await save_to_local_web(f"AI: {prompt[:30]}", resp)
-        await status.edit(f"🧠 **Gemini ({m_name}):**\n📄 **Статья готова:**\n👉 {link}", disable_web_page_preview=False)
+        link = await save_to_local_web(article_title, full_content)
+        await status.edit(f"🧠 **Gemini ({m_name}):**\n📄 **{article_title}**\n👉 {link}", disable_web_page_preview=False)
     except Exception as e:
         await edit_or_reply(message, f"Err: {e}")
 
@@ -110,13 +181,36 @@ async def chatt_handler(client, message):
         m_name = AVAILABLE_MODELS[SETTINGS.get("model_key", "1")]["name"]
         status = await edit_or_reply(message, f"💬📝 {m_name} пишет в контексте...")
 
-        final = f"{reply_txt}{prompt}"
-        content = [reply_img, final] if reply_img else final
+        # Один запрос: просим сгенерировать и заголовок, и контент
+        enhanced_prompt = (
+            f"{reply_txt}\n\n" if reply_txt else ""
+        ) + (
+            f"Запрос: {prompt}\n\n"
+            "ВАЖНО: Ответь в следующем формате (без изменений):\n"
+            "TITLE: [короткий ёмкий заголовок, максимум 60 символов]\n"
+            "CONTENT:\n"
+            "[твой ответ здесь]"
+        )
+        
+        content_input = [reply_img, enhanced_prompt] if reply_img else enhanced_prompt
+        
+        raw_resp = await ask_gemini_chat(message.chat.id, content_input)
+        
+        # Парсим ответ на заголовок и контент
+        article_title, article_content = parse_ai_response_with_title(raw_resp)
+        
+        # Форматируем контент: Заголовок → Вопрос → Ответ
+        full_content = (
+            f"# {article_title}\n\n"
+            f"## Вопрос\n\n"
+            f"{prompt}\n\n"
+            f"---\n\n"
+            f"## Ответ\n\n"
+            f"{article_content}"
+        )
 
-        resp = await ask_gemini_chat(message.chat.id, content)
-
-        link = await save_to_local_web(f"Context: {prompt[:20]}...", resp)
-        await status.edit(f"💬📝 **Ответ (Telegraph):**\n👉 {link}")
+        link = await save_to_local_web(article_title, full_content)
+        await status.edit(f"💬📝 **{article_title}**\n👉 {link}")
     except Exception as e:
         await edit_or_reply(message, f"Err: {e}")
 
