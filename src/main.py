@@ -5,6 +5,7 @@ from pyrogram import Client, idle
 from pyrogram.errors import SessionPasswordNeeded, PasswordHashInvalid
 from src.config import API_ID, API_HASH, PHONES, MY_DOMAIN
 from src.services.auth_qr import login_via_qr
+from src.services.connection import check_internet as conn_check_internet, reconnect_client, check_client_health
 import uvicorn
 
 
@@ -40,32 +41,35 @@ async def keep_alive_monitor(apps: list[Client], interval: int = 30):
     """
     Фоновый мониторинг соединения.
     НЕ БЛОКИРУЕТ обработку сообщений - работает параллельно с idle().
+    Проверяет реальное здоровье соединения через get_me(), а не только флаг is_connected.
     """
     print(f"🔁 Keep-alive monitor запущен (интервал: {interval}с)")
-    
+
     while True:
         try:
             await asyncio.sleep(interval)
-            
-            # Проверяем интернет
-            if not await check_internet():
+
+            # Проверяем интернет через TCP-сокет (быстро, без HTTP)
+            if not await conn_check_internet():
                 print("🔌 Потеряно соединение с интернетом")
-                
+
                 if await wait_for_internet(max_wait=300):
                     print("✅ Интернет восстановлен!")
-                    
-                    # Если клиент отключился, пытаемся переподключить
-                    for app in apps:
-                        if not app.is_connected:
-                            try:
-                                print(f"🔄 Переподключаю {app.name}...")
-                                await app.start()
-                                print(f"✅ {app.name} переподключен!")
-                            except Exception as e:
-                                print(f"❌ Ошибка переподключения {app.name}: {e}")
                 else:
                     print("❌ Не удалось дождаться интернета (5 мин)")
-                    
+                    continue
+
+            # Проверяем реальное состояние каждого клиента (get_me(), не is_connected)
+            for app in apps:
+                healthy = await check_client_health(app)
+                if not healthy:
+                    print(f"⚠️ {app.name}: соединение мёртвое, переподключаю...")
+                    ok = await reconnect_client(app, max_attempts=5)
+                    if ok:
+                        print(f"✅ {app.name} переподключен!")
+                    else:
+                        print(f"❌ {app.name}: не удалось переподключиться")
+
         except asyncio.CancelledError:
             print("🛑 Keep-alive monitor остановлен")
             break
