@@ -43,6 +43,39 @@ async def wait_for_internet(max_wait: int = 300, check_interval: int = 5) -> boo
         current_interval = min(current_interval * 2, 60)
     return False
 
+async def _force_disconnect(client: Client) -> None:
+    """
+    Принудительно разрывает соединение, обходя проверки флагов Pyrogram.
+
+    Проблема: stop() = terminate() + disconnect().
+    Если is_initialized уже False (watchdog упал сам) — terminate() бросает
+    ConnectionError и stop() прерывается, НЕ вызывая disconnect().
+    В итоге is_connected остаётся True и start() падает с "Client is already connected".
+
+    Решение: вызываем terminate() и disconnect() раздельно, каждый в своём try/except.
+    """
+    # 1. Останавливаем диспетчер/воркеры (если ещё живы)
+    if client.is_initialized:
+        try:
+            await asyncio.wait_for(client.terminate(), timeout=10)
+        except Exception as e:
+            logger.debug(f"terminate() skipped: {e}")
+
+    # 2. Закрываем TCP-сокет и сессию (если ещё подключены)
+    if client.is_connected:
+        try:
+            await asyncio.wait_for(client.disconnect(), timeout=10)
+        except Exception as e:
+            logger.debug(f"disconnect() skipped: {e}")
+
+    # 3. Форсированно сбрасываем флаги — на случай если выше всё равно упало
+    if client.is_connected:
+        logger.warning(f"[{getattr(client, 'name', '?')}] Принудительный сброс is_connected=False")
+        client.is_connected = False
+    if client.is_initialized:
+        client.is_initialized = False
+
+
 async def reconnect_client(client: Client, max_attempts: int = 5, base_delay: int = 5) -> bool:
     client_name = getattr(client, 'name', 'unknown')
     for attempt in range(1, max_attempts + 1):
@@ -51,12 +84,7 @@ async def reconnect_client(client: Client, max_attempts: int = 5, base_delay: in
                 if not await wait_for_internet():
                     return False
 
-            if client.is_connected:
-                try:
-                    await asyncio.wait_for(client.stop(), timeout=15)
-                except Exception:
-                    pass
-
+            await _force_disconnect(client)
             await asyncio.sleep(2)
             await client.start()
             logger.info(f"[{client_name}] переподключен (попытка {attempt})")
