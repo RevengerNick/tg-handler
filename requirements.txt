@@ -1,21 +1,23 @@
-pyrogram
-tgcrypto
-google-genai
-python-dotenv
-aiohttp
-yt-dlp
-yandex-music
-selenium
-pillow
-beautifulsoup4
-lxml
-openpyxl
-psutil
-telegraph
-markdown
-requests
-qrcode
-fastapi
-uvicorn
-jinja2
-aiofiles
+# Direct runtime dependencies. Versions are pinned for reproducible local and Docker builds.
+Pyrogram==2.0.106
+# TgCrypto is optional. Pyrogram works without it, which keeps ARM/Raspberry Pi
+# installation reliable; see requirements-accelerated.txt for the opt-in extra.
+google-genai==1.73.1
+python-dotenv==1.2.2
+aiohttp==3.13.5
+yt-dlp==2026.3.17
+yandex-music==3.0.0
+selenium==4.43.0
+Pillow==12.2.0
+beautifulsoup4==4.14.3
+lxml==6.1.0
+openpyxl==3.1.5
+psutil==7.2.2
+telegraph==2.2.0
+Markdown==3.10.2
+requests==2.33.1
+qrcode==8.2
+fastapi==0.136.0
+uvicorn==0.44.0
+Jinja2==3.1.6
+aiofiles==25.1.0

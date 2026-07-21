@@ -5,6 +5,7 @@ from src.services import edit_or_reply, get_sys_info, update_help_page
 from src.state import SETTINGS, save_settings, ASYNC_CHAT_SESSIONS
 from src.config import AVAILABLE_MODELS, AVAILABLE_VOICES, AVAILABLE_TTS_MODELS, HELP_DICT
 from src.access_filters import AccessFilter
+from src.services.files import output_path
 
 
 @Client.on_message(filters.command(["help", "помощь"], prefixes=".") & AccessFilter)
@@ -195,7 +196,7 @@ async def reset_handler(client, message):
             chat = ASYNC_CHAT_SESSIONS[chat_id]
             hist = await chat.get_history()
             msgs = [{'role': m.role, 'txt': m.parts[0].text if m.parts else ""} for m in hist]
-            fname = f"history_{chat_id}.json"
+            fname = output_path("history", f"history_{chat_id}.json")
             with open(fname, 'w', encoding='utf-8') as f:
                 json.dump(msgs, f, ensure_ascii=False)
             del ASYNC_CHAT_SESSIONS[chat_id]

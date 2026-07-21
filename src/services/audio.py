@@ -3,10 +3,12 @@ import os
 import re
 import time
 import struct
+from pathlib import Path
 from google.genai import types
 from src.services.ai_core import get_ai_client, rotate_key_and_retry
 from src.config import AVAILABLE_VOICES, AVAILABLE_TTS_MODELS, VOICE_NAMES_LIST
 from src.state import SETTINGS
+from src.services.files import output_path
 
 
 def parse_audio_mime_type(mime_type: str):
@@ -57,7 +59,7 @@ async def convert_wav_to_ogg(wav_path):
     """
     Конвертирует WAV в OGG Opus (формат голосовых Telegram).
     """
-    ogg_path = wav_path.replace(".wav", ".ogg")
+    ogg_path = output_path("audio", f"{Path(wav_path).stem}.ogg")
 
     cmd = [
         "ffmpeg", "-i", wav_path,
@@ -134,7 +136,7 @@ async def generate_gemini_tts(text):
             acc_data, mime = result
             wav_data = convert_to_wav(bytes(acc_data), mime)
 
-            filename = f"gemini_voice_{int(time.time())}.wav"
+            filename = output_path("audio", "gemini_voice.wav")
             with open(filename, "wb") as f:
                 f.write(wav_data)
             return filename
@@ -225,7 +227,7 @@ async def generate_multispeaker_tts(script_text, custom_cast=None):
             acc_data, mime = result
             wav_data = convert_to_wav(bytes(acc_data), mime)
 
-            filename = f"dialog_{int(time.time())}.wav"
+            filename = output_path("audio", "dialog.wav")
             with open(filename, "wb") as f:
                 f.write(wav_data)
             return filename

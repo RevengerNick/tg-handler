@@ -1,5 +1,7 @@
 import json
 import os
+import tempfile
+import threading
 from src.config import SETTINGS_FILE, AVAILABLE_MODELS
 
 # Хранилище АСИНХРОННЫХ сессий чата
@@ -18,19 +20,21 @@ SETTINGS = {
     "help_page_url": None  # Полная ссылка
 }
 
+_settings_lock = threading.RLock()
+
 
 def load_settings():
     global SETTINGS
     if os.path.exists(SETTINGS_FILE):
         try:
-            with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
+            with _settings_lock, open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
                 saved = json.load(f)
                 for k, v in saved.items():
                     SETTINGS[k] = v
 
             if "blacklist" not in SETTINGS: SETTINGS["blacklist"] = []
 
-            model_info = AVAILABLE_MODELS.get(SETTINGS.get("model_key", "1"))
+            model_info = AVAILABLE_MODELS.get(SETTINGS.get("model_key", "1"), AVAILABLE_MODELS["1"])
             print(f"⚙️ Settings Loaded. Model: {model_info['name']}")
         except Exception as e:
             print(f"⚠️ Settings Load Error: {e}")
@@ -38,8 +42,18 @@ def load_settings():
 
 def save_settings():
     try:
-        with open(SETTINGS_FILE, 'w', encoding='utf-8') as f:
-            json.dump(SETTINGS, f, indent=4, ensure_ascii=False)
+        directory = os.path.dirname(SETTINGS_FILE)
+        with _settings_lock:
+            fd, temporary_file = tempfile.mkstemp(prefix="settings-", suffix=".tmp", dir=directory)
+            try:
+                with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                    json.dump(SETTINGS, f, indent=4, ensure_ascii=False)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(temporary_file, SETTINGS_FILE)
+            except Exception:
+                os.unlink(temporary_file)
+                raise
     except Exception as e:
         print(f"⚠️ Settings Save Error: {e}")
 

@@ -5,6 +5,7 @@ import random
 import aiohttp
 from src.services.ai_core import get_ai_client, rotate_key_and_retry
 from src.config import IMAGEN_MODEL
+from src.services.files import output_path
 from google.genai import types
 
 
@@ -35,7 +36,7 @@ async def generate_imagen(prompt):
             # Сохраняем результат
             if response.generated_images:
                 image_data = response.generated_images[0].image.image_bytes
-                filename = f"img_imagen_{int(time.time())}.jpg"
+                filename = output_path("images", "imagen.jpg")
 
                 with open(filename, "wb") as f:
                     f.write(image_data)
@@ -69,7 +70,7 @@ async def generate_flux(prompt):
 
     url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1024&height=1024&seed={seed}&model=flux"
 
-    filename = f"img_flux_{int(time.time())}.jpg"
+    filename = output_path("images", "flux.jpg")
 
     try:
         async with aiohttp.ClientSession() as session:

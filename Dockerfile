@@ -6,17 +6,14 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
 # Устанавливаем системные зависимости
-# chromium + driver: для Selenium на ARM
+# chromium + driver: для Selenium
 # ffmpeg: для yt-dlp
-# gcc, g++: для сборки tgcrypto и psutil
-RUN apt-get update && apt-get install -y \
+# gcc: запасной вариант, если pip не найдёт готовое колесо для psutil
+RUN apt-get update && apt-get install -y --no-install-recommends \
     chromium \
     chromium-driver \
     ffmpeg \
     gcc \
-    g++ \
-    libffi-dev \
-    python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Указываем рабочую папку
@@ -31,7 +28,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
 COPY . .
 
 # Создаем папку сессий, если её нет
-RUN mkdir -p sessions
+RUN mkdir -p /app/data/sessions /app/data/files /app/data/tmp
 
 # Команда запуска
-CMD ["python", "main.py"]
+CMD ["python", "-m", "src.main"]

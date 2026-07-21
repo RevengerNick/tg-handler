@@ -3,9 +3,9 @@ import uuid
 import os
 from datetime import datetime
 from urllib.parse import quote
-from src.config import INSTANT_VIEW_RHASH, MY_DOMAIN, ROOT_DIR
+from src.config import DATABASE_PATH, INSTANT_VIEW_RHASH, MY_DOMAIN
 
-DB_PATH = os.path.join(ROOT_DIR, "database.db")
+DB_PATH = DATABASE_PATH
  
 def init_db():
     """Инициализирует таблицу articles, если она не существует"""

@@ -5,6 +5,7 @@ import logging
 import yt_dlp
 from yandex_music import Client as YMClient
 from src.config import YANDEX_TOKEN
+from src.services.files import output_directory, output_path
 
 # Инициализация Yandex Music
 ym_client = YMClient(YANDEX_TOKEN).init() if YANDEX_TOKEN else None
@@ -22,9 +23,10 @@ async def download_video(link: str, quality_mode: int):
 
     def _sync_dl():
         options = {
-            'outtmpl': '%(title)s.%(ext)s',
+            'outtmpl': os.path.join(output_directory("downloads"), '%(title).150B [%(id)s].%(ext)s'),
             'quiet': True,
             'no_warnings': True,
+            'windowsfilenames': True,
             # ВАЖНО: Пакуем в MP4, чтобы Telegram нормально отображал превью
             'merge_output_format': 'mp4',
             'geo_bypass': True,
@@ -55,9 +57,9 @@ async def download_video(link: str, quality_mode: int):
                 info = ydl.extract_info(link, download=True)
 
                 if quality_mode == 2:
-                    title = info['title']
+                    filename = ydl.prepare_filename(info)
                     # yt-dlp чистит имя файла, но мы перестрахуемся
-                    sanitized_title = re.sub(r'[\\/*?:"<>|]', "", title)
+                    sanitized_title = filename.rsplit('.', 1)[0]
                     # Ищем файл с расширением mp3 (так как постпроцессор его конвертировал)
                     # Иногда yt-dlp меняет имя, поэтому лучше вернуть ожидаемое имя
                     # Но самый надежный способ - найти файл в папке, который начинается так же
@@ -120,12 +122,14 @@ async def download_yandex_track(url: str):
                 direct_link = info[0].get_direct_link()
                 # Импортируем requests локально, чтобы не засорять глобальную область
                 import requests
-                track_data = requests.get(direct_link).content
+                response = requests.get(direct_link, timeout=(5, 60))
+                response.raise_for_status()
+                track_data = response.content
 
                 # Формируем имя: "Название - Артист.mp3"
                 safe_title = re.sub(r'[\\/*?:"<>|]', "", track.title)
                 safe_artist = re.sub(r'[\\/*?:"<>|]', "", track.artists[0].name if track.artists else "Unknown")
-                filename = f"{safe_title} - {safe_artist}.mp3"
+                filename = output_path("downloads", f"{safe_title} - {safe_artist}.mp3")
 
                 with open(filename, 'wb') as f:
                     f.write(track_data)

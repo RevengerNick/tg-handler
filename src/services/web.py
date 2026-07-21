@@ -7,18 +7,23 @@ import psutil   # Для системной инфо
 import aiohttp
 import markdown
 import requests
+import shutil
 from io import BytesIO
+from urllib.parse import quote, urlencode
 from PIL import Image
 from openpyxl import Workbook
 from openpyxl.drawing.image import Image as ExcelImage
 from datetime import datetime
 from bs4 import BeautifulSoup
 from selenium import webdriver
+from selenium.webdriver.chrome.options import Options as ChromeOptions
+from selenium.webdriver.chrome.service import Service as ChromeService
 from selenium.webdriver.firefox.options import Options as FirefoxOptions
 from selenium.webdriver.firefox.service import Service as FirefoxService
 from telegraph import Telegraph
 
-from src.config import EXCHANGE_KEY
+from src.config import EXCHANGE_KEY, OLX_SEARCH_MODE
+from src.services.files import output_path, temporary_directory
 from src.state import SETTINGS, save_settings
 
 # Инициализация Telegraph
@@ -173,129 +178,303 @@ async def create_telegraph_page(title, markdown_text):
     return await asyncio.to_thread(_sync_upload)
 
 
-async def olx_parser(query: str, max_pages: int = 1, with_images: bool = True):
-    """
-    Парсит OLX.uz (Явное указание путей для RPi).
-    """
+OLX_HTTP_HEADERS = {
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"
+    ),
+}
 
-    def _scrape():
-        # Настройки Firefox
-        options = FirefoxOptions()
-        options.add_argument("--headless")  # Без окна
 
-        # Маскировка
-        options.set_preference("general.useragent.override",
-                               "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36")
+def _build_olx_url(query: str, page: int, price_from: int | None,
+                   price_to: int | None, state: str | None) -> str:
+    """Собирает один и тот же URL для браузерного и HTTP-режима поиска."""
+    url = f"https://www.olx.uz/list/q-{quote(query, safe='')}/"
+    params = []
+    if page > 1:
+        params.append(("page", page))
+    if price_from is not None:
+        params.append(("search[filter_float_price:from]", price_from))
+    if price_to is not None:
+        params.append(("search[filter_float_price:to]", price_to))
+    if state in {"new", "used"}:
+        params.append(("search[filter_enum_state][0]", state))
+    return f"{url}?{urlencode(params)}" if params else url
 
+
+def _create_olx_workbook():
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "OLX"
+    worksheet.append([
+        "Фото", "Ссылка", "Цена", "Название", "Дата/Место", "Состояние",
+        "Запрос", "Страница",
+    ])
+    dimensions = {"A": 22, "B": 15, "C": 20, "D": 40, "E": 25, "F": 15, "G": 30, "H": 10}
+    for column, width in dimensions.items():
+        worksheet.column_dimensions[column].width = width
+    return workbook, worksheet
+
+
+def _parse_olx_card(card) -> dict | None:
+    """Извлекает поля объявления из разметки, полученной любым способом."""
+    title_tag = card.find("h6") or card.find("h4")
+    link_tag = card.find("a", href=True)
+    if not title_tag or not link_tag:
+        return None
+
+    href = link_tag["href"]
+    link = f"https://www.olx.uz{href}" if href.startswith("/") else href
+    price_tag = card.find("p", {"data-testid": "ad-price"})
+    location_tag = card.find("p", {"data-testid": "location-date"})
+    condition_tag = card.find("span", title=True)
+    condition = condition_tag["title"] if condition_tag and len(condition_tag["title"]) < 30 else "-"
+
+    return {
+        "title": title_tag.get_text(" ", strip=True),
+        "link": link,
+        "price": price_tag.get_text(" ", strip=True) if price_tag else "Договорная",
+        "location": location_tag.get_text(" ", strip=True) if location_tag else "-",
+        "condition": condition,
+        "image": card.find("img"),
+    }
+
+
+def _write_olx_row(worksheet, row: int, item: dict, query: str, page: int,
+                   photo_label: str) -> None:
+    worksheet[f"A{row}"] = photo_label
+    worksheet[f"B{row}"] = f'=HYPERLINK("{item["link"]}", "Перейти")'
+    worksheet[f"B{row}"].style = "Hyperlink"
+    worksheet[f"C{row}"] = item["price"]
+    worksheet[f"D{row}"] = item["title"]
+    worksheet[f"E{row}"] = item["location"]
+    worksheet[f"F{row}"] = item["condition"]
+    worksheet[f"G{row}"] = query
+    worksheet[f"H{row}"] = page
+
+
+def _save_olx_report(workbook, first_query: str, suffix: str) -> str:
+    safe_query = re.sub(r'[\\/:*?"<>|]', "_", first_query)
+    filename = output_path("olx", f"olx_{safe_query}_{suffix}.xlsx")
+    workbook.save(filename)
+    return filename
+
+
+def _get_olx_http_page(session: requests.Session, url: str):
+    """Делает до двух попыток: OLX иногда кратко закрывает соединение."""
+    for attempt in range(2):
         try:
-            # Firefox обычно сам находит geckodriver в /usr/bin
-            # Но можно указать явно
-            service = FirefoxService("/usr/bin/geckodriver") if os.path.exists("/usr/bin/geckodriver") else None
-
-            if service:
-                driver = webdriver.Firefox(service=service, options=options)
+            response = session.get(url, timeout=(5, 25))
+            response.raise_for_status()
+            return response
+        except requests.RequestException as error:
+            if attempt == 0:
+                print(f"OLX HTTP temporary error: {error}; retrying once.")
+                time.sleep(1)
             else:
-                driver = webdriver.Firefox(options=options)
+                print(f"OLX HTTP Error: {error}")
+    return None
 
-        except Exception as e:
-            print(f"Firefox Driver Error: {e}")
-            return None
 
-        wb = Workbook()
-        ws = wb.active
-        ws.append(['Фото', 'Ссылка', 'Цена', 'Название', 'Дата/Место', 'Состояние', 'Страница'])
+def _create_olx_driver():
+    """Запускает Chromium, а при его отсутствии — Firefox."""
+    user_agent = OLX_HTTP_HEADERS["User-Agent"]
+    chrome_options = ChromeOptions()
+    chrome_options.add_argument("--headless=new")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument(f"--user-agent={user_agent}")
 
-        dims = {'A': 22, 'B': 15, 'C': 20, 'D': 40, 'E': 25, 'F': 15, 'G': 10}
-        for col, w in dims.items(): ws.column_dimensions[col].width = w
+    chromium_binary = next(
+        (path for path in ("/usr/bin/chromium", "/usr/bin/chromium-browser") if os.path.exists(path)),
+        None,
+    )
+    if chromium_binary:
+        chrome_options.binary_location = chromium_binary
 
-        row = 2
-
+    try:
+        driver_path = os.getenv("CHROMEDRIVER_PATH") or shutil.which("chromedriver")
+        service = ChromeService(driver_path) if driver_path else None
+        return webdriver.Chrome(service=service, options=chrome_options) if service else webdriver.Chrome(options=chrome_options)
+    except Exception as chrome_error:
+        firefox_options = FirefoxOptions()
+        firefox_options.add_argument("--headless")
+        firefox_options.set_preference("general.useragent.override", user_agent)
         try:
+            geckodriver_path = os.getenv("GECKODRIVER_PATH") or shutil.which("geckodriver")
+            service = FirefoxService(geckodriver_path) if geckodriver_path else None
+            return webdriver.Firefox(service=service, options=firefox_options) if service else webdriver.Firefox(options=firefox_options)
+        except Exception as firefox_error:
+            raise RuntimeError(
+                f"Cannot start Chromium ({chrome_error}) or Firefox ({firefox_error})"
+            ) from firefox_error
+
+
+def _scrape_olx_over_http(clean_queries: list[str], max_pages: int,
+                          price_from: int | None, price_to: int | None,
+                          state: str | None) -> str | None:
+    """Запасной режим без Selenium: быстрее и подходит для слабых ARM-устройств.
+
+    OLX может ограничить такие запросы или изменить HTML. Тогда функция вернёт
+    ``None`` без падения userbot; в отчёте этот режим намеренно не загружает фото.
+    """
+    workbook, worksheet = _create_olx_workbook()
+    row = 2
+    total_found = 0
+
+    with requests.Session() as session:
+        session.headers.update(OLX_HTTP_HEADERS)
+        for query in clean_queries:
             for page in range(1, max_pages + 1):
-                base_url = f"https://www.olx.uz/list/q-{query}/"
-                url = base_url if page == 1 else f"{base_url}?page={page}"
-
-                print(f"📄 Scraping Page {page}: {url}")
-                driver.get(url)
-                time.sleep(2 if page == 1 else 1.5)
-
-                if "Ничего не найдено" in driver.page_source:
+                url = _build_olx_url(query, page, price_from, price_to, state)
+                print(f"📄 OLX HTTP Query='{query}' Page={page}: {url}")
+                response = _get_olx_http_page(session, url)
+                if response is None:
                     break
 
-                cards = driver.find_elements("css selector", "div[data-cy='l-card']")
-                if not cards: break
+                page_soup = BeautifulSoup(response.text, "html.parser")
+                cards = page_soup.select("div[data-cy='l-card']")
+                if not cards:
+                    print("OLX HTTP: объявления не найдены или страница ограничила запрос.")
+                    break
 
+                found_on_page = 0
                 for card in cards:
-                    try:
-                        driver.execute_script("arguments[0].scrollIntoView({behavior: 'instant', block: 'center'});",
-                                              card)
-                        time.sleep(0.5 if with_images else 0.1)
+                    item = _parse_olx_card(card)
+                    if not item:
+                        continue
+                    _write_olx_row(worksheet, row, item, query, page, "Без фото (HTTP)")
+                    row += 1
+                    total_found += 1
+                    found_on_page += 1
 
-                        soup = BeautifulSoup(card.get_attribute('outerHTML'), 'html.parser')
+                if found_on_page == 0 or len(cards) < 5:
+                    break
 
-                        title_tag = soup.find("h6") or soup.find("h4")
-                        if not title_tag: continue
-                        title = title_tag.text.strip()
+    if total_found == 0:
+        return None
+    return _save_olx_report(workbook, clean_queries[0], "http")
 
-                        price_tag = soup.find("p", {"data-testid": "ad-price"})
-                        price = price_tag.text.strip() if price_tag else "Договорная"
 
-                        link_tag = soup.find("a")
-                        href = link_tag.get("href")
-                        link = f"https://www.olx.uz{href}" if href.startswith("/") else href
+def _scrape_olx_with_browser(driver, clean_queries: list[str], max_pages: int,
+                              with_images: bool, price_from: int | None,
+                              price_to: int | None, state: str | None,
+                              temp_dir: str) -> str | None:
+    workbook, worksheet = _create_olx_workbook()
+    row = 2
+    total_found = 0
 
-                        loc_tag = soup.find("p", {"data-testid": "location-date"})
-                        loc = loc_tag.text.strip() if loc_tag else "-"
+    for query in clean_queries:
+        for page in range(1, max_pages + 1):
+            url = _build_olx_url(query, page, price_from, price_to, state)
+            print(f"📄 OLX browser Query='{query}' Page={page}: {url}")
+            driver.get(url)
+            time.sleep(2 if page == 1 else 1.5)
 
-                        cond_tag = soup.find("span", title=True)
-                        cond = cond_tag['title'] if cond_tag and cond_tag.has_attr('title') and len(
-                            cond_tag['title']) < 30 else "-"
+            if "Ничего не найдено" in driver.page_source:
+                break
 
-                        if with_images:
-                            img_tag = soup.find("img")
-                            if img_tag:
-                                src = img_tag.get("src") or img_tag.get("srcset", "").split()[0]
-                                if src and "http" in src:
-                                    hd_src = re.sub(r';s=\d+x\d+', ';s=1000x1000', src)
-                                    try:
-                                        resp = requests.get(hd_src, timeout=3)
-                                        if resp.status_code == 200:
-                                            img = Image.open(BytesIO(resp.content))
-                                            img.thumbnail((150, 150))
+            cards = driver.find_elements("css selector", "div[data-cy='l-card']")
+            if not cards:
+                break
 
-                                            path = f"temp_img_{row}.png"
-                                            img.save(path)
-
-                                            excel_img = ExcelImage(path)
-                                            excel_img.width = 150
-                                            excel_img.height = 120
-                                            ws.add_image(excel_img, f"A{row}")
-                                            ws.row_dimensions[row].height = 100
-                                    except:
-                                        pass
-                        else:
-                            ws[f"A{row}"] = "No Image"
-
-                        ws[f"B{row}"] = f'=HYPERLINK("{link}", "Перейти")'
-                        ws[f"B{row}"].style = "Hyperlink"
-                        ws[f"C{row}"] = price
-                        ws[f"D{row}"] = title
-                        ws[f"E{row}"] = loc
-                        ws[f"F{row}"] = cond
-                        ws[f"G{row}"] = page
-
-                        row += 1
-                    except Exception as e:
-                        print(f"Card Error: {e}")
+            found_on_page = 0
+            for card in cards:
+                try:
+                    driver.execute_script(
+                        "arguments[0].scrollIntoView({behavior: 'instant', block: 'center'});", card
+                    )
+                    time.sleep(0.5 if with_images else 0.1)
+                    item = _parse_olx_card(BeautifulSoup(card.get_attribute("outerHTML"), "html.parser"))
+                    if not item:
                         continue
 
-                if len(cards) < 5: break
+                    _write_olx_row(
+                        worksheet, row, item, query, page,
+                        "Фото недоступно" if with_images else "Без фото",
+                    )
+                    if with_images and item["image"]:
+                        srcset = item["image"].get("srcset", "")
+                        source = item["image"].get("src") or (srcset.split()[0] if srcset else None)
+                        if source and source.startswith("http"):
+                            try:
+                                image_url = re.sub(r";s=\d+x\d+", ";s=1000x1000", source)
+                                response = requests.get(image_url, headers=OLX_HTTP_HEADERS, timeout=(3, 10))
+                                if response.status_code == 200:
+                                    image = Image.open(BytesIO(response.content))
+                                    image.thumbnail((150, 150))
+                                    image_path = os.path.join(temp_dir, f"temp_img_{row}.png")
+                                    image.save(image_path)
+                                    excel_image = ExcelImage(image_path)
+                                    excel_image.width = 150
+                                    excel_image.height = 120
+                                    worksheet.add_image(excel_image, f"A{row}")
+                                    worksheet.row_dimensions[row].height = 100
+                            except Exception as error:
+                                print(f"OLX image error: {error}")
 
-            fname = f"olx_{query}_{int(time.time())}.xlsx"
-            wb.save(fname)
-            return fname
+                    row += 1
+                    total_found += 1
+                    found_on_page += 1
+                except Exception as error:
+                    print(f"OLX card error: {error}")
+
+            if found_on_page == 0 or len(cards) < 5:
+                break
+
+    if total_found == 0:
+        return None
+    return _save_olx_report(workbook, clean_queries[0], "multi")
+
+
+async def olx_parser(queries: list, max_pages: int = 1, with_images: bool = True,
+                     price_from: int = None, price_to: int = None, state: str = None):
+    """Ищет OLX через браузер или HTTP с безопасным резервным переключением."""
+
+    def _scrape():
+        clean_queries = [str(query).strip() for query in queries if str(query).strip()]
+        if not clean_queries:
+            return None
+        try:
+            max_page_count = max(1, min(int(max_pages), 50))
+        except (TypeError, ValueError):
+            max_page_count = 1
+
+        if OLX_SEARCH_MODE == "http":
+            return _scrape_olx_over_http(
+                clean_queries, max_page_count, price_from, price_to, state
+            )
+
+        driver = None
+        temp_dir = temporary_directory("olx")
+        browser_failed = False
+        browser_result = None
+        try:
+            driver = _create_olx_driver()
+            browser_result = _scrape_olx_with_browser(
+                driver, clean_queries, max_page_count, with_images, price_from,
+                price_to, state, temp_dir,
+            )
+        except Exception as error:
+            browser_failed = True
+            print(f"OLX browser error: {error}")
         finally:
-            driver.quit()
+            if driver:
+                try:
+                    driver.quit()
+                except Exception as error:
+                    print(f"OLX browser shutdown error: {error}")
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+        if OLX_SEARCH_MODE == "auto" and (browser_failed or browser_result is None):
+            print("OLX: переключаюсь на HTTP-режим без браузера и изображений.")
+            return _scrape_olx_over_http(
+                clean_queries, max_page_count, price_from, price_to, state
+            )
+        return browser_result
 
     return await asyncio.to_thread(_scrape)
 

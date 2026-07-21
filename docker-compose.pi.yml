@@ -1,0 +1,9 @@
+# Используется вместе с docker-compose.yml на Raspberry Pi.
+# Браузер не устанавливается: OLX работает по HTTP и создаёт Excel без фото.
+services:
+  userbot:
+    build:
+      context: .
+      dockerfile: Dockerfile.lite
+    environment:
+      OLX_SEARCH_MODE: http

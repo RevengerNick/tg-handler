@@ -1,9 +1,11 @@
 import os
+import re
 import time
 import asyncio
 from pyrogram import Client, filters
 from src.services import edit_or_reply, get_currency, olx_parser, download_video, download_yandex_track, analyze_chat_history
 from src.access_filters import AccessFilter
+from src.services.files import remove_generated_file
 
 
 # --- КАЛЬКУЛЯТОР ---
@@ -143,7 +145,7 @@ async def dl_handler(client, message):
                         pass
 
             await client.send_document(message.chat.id, path, caption="✅ Готово", progress=progress)
-            os.remove(path)
+            remove_generated_file(path)
             await message.delete()
         else:
             await message.edit("❌ Ошибка скачивания или файл не найден.")
@@ -156,45 +158,114 @@ async def olx_handler(client, message):
     try:
         args = message.text.split()
         if len(args) < 2:
-            return await message.edit(
-                "🔍 **OLX Парсер**\n\nПримеры:\n`.olx iphone` (1 стр, с фото)\n`.olx iphone 3` (3 стр, с фото)\n`.olx iphone noimg` (1 стр, без фото)\n`.olx iphone 5 noimg` (5 стр, без фото)")
+            help_text = """🔍 **OLX Парсер**
+
+**Базовый поиск:**
+`.olx iphone` - 1 стр, с фото
+`.olx iphone p=3` - 3 стр, с фото
+`.olx iphone noimg` - без фото (быстрее)
+
+**Несколько запросов в один файл:**
+`.olx Phillips, Braun, Tefal p=5` - всё в 1 xlsx
+
+**Фильтры по цене:**
+`.olx iphone from=100000` - от 100,000 сум
+`.olx iphone to=500000` - до 500,000 сум
+`.olx iphone from=100000 to=500000` - диапазон
+
+**Фильтр по состоянию:**
+`.olx iphone state=new` - только новые
+`.olx iphone state=used` - только б/у
+
+**Комбинировано:**
+`.olx iphone p=5 from=100000 to=500000 state=new noimg`
+(5 стр, цена 100к-500к, новые, без фото)"""
+            return await message.edit(help_text)
 
         # Дефолтные значения
         max_pages = 1
         with_images = True
+        price_from = None
+        price_to = None
+        state = None
         query_parts = []
 
-        # Парсим аргументы с конца
+        # Парсим аргументы
         for arg in args[1:]:
-            # Проверка на флаг "без картинок"
-            if arg.lower() in ["noimg", "noimage", "безфото", "-i"]:
+            arg_lower = arg.lower()
+
+            if arg_lower in ["noimg", "noimage", "безфото", "-i"]:
                 with_images = False
-            # Проверка на количество страниц
-            elif arg.isdigit() and int(arg) < 20:  # Ограничим 20 страницами для безопасности
-                max_pages = int(arg)
-            # Иначе это часть поискового запроса
+            elif arg_lower.startswith("p=") or arg_lower.startswith("стр=") or arg_lower.startswith("pages="):
+                try:
+                    max_pages = int(arg.split("=")[1])
+                    if max_pages < 1 or max_pages > 50:
+                        max_pages = 1
+                except:
+                    pass
+            elif arg_lower.startswith("from=") or arg_lower.startswith("от="):
+                try:
+                    price_from = int(arg.split("=")[1].replace(" ", "").replace(",", ""))
+                except:
+                    pass
+            elif arg_lower.startswith("to=") or arg_lower.startswith("до="):
+                try:
+                    price_to = int(arg.split("=")[1].replace(" ", "").replace(",", ""))
+                except:
+                    pass
+            elif arg_lower.startswith("state=") or arg_lower.startswith("сост="):
+                state_val = arg.split("=")[1].lower()
+                if state_val in ["new", "новый", "новое", "новая"]:
+                    state = "new"
+                elif state_val in ["used", "б/у", "б\у", "бу"]:
+                    state = "used"
             else:
                 query_parts.append(arg)
 
-        query = " ".join(query_parts)
-        if not query:
+        raw_query = " ".join(query_parts)
+        if not raw_query:
             return await message.edit("❌ Вы не указали, что искать.")
 
-        mode_text = "с картинками" if with_images else "без картинок (быстро)"
-        await message.edit(f"🔍 Паршу OLX: **{query}**\n📄 Страниц: {max_pages}\n🚀 Режим: {mode_text}...")
+        # Разделители: запятая, точка с запятой, слеш
+        queries = [q.strip() for q in re.split(r'[,;/]', raw_query) if q.strip()]
+        if not queries:
+            return await message.edit("❌ Вы не указали, что искать.")
 
-        f = await olx_parser(query, max_pages, with_images)
+        # Формируем текст статуса
+        filters_text = []
+        if price_from:
+            filters_text.append(f"от {price_from:,} сум")
+        if price_to:
+            filters_text.append(f"до {price_to:,} сум")
+        if state:
+            state_ru = "новое" if state == "new" else "б/у"
+            filters_text.append(f"сост: {state_ru}")
+
+        filters_str = " | ".join(filters_text) if filters_text else "без фильтров"
+        mode_text = "с фото" if with_images else "без фото"
+
+        total = len(queries)
+        multi_mode = total > 1
+
+        await message.edit(
+            f"🔍 **OLX Поиск{'и' if multi_mode else ''}**\n"
+            f"📦 Запрос{'ы' if multi_mode else ''}: `{', '.join(queries)}`\n"
+            f"📄 Страниц: {max_pages}\n"
+            f"⚙️ Фильтры: {filters_str}\n"
+            f"🚀 Режим: {mode_text}..."
+        )
+
+        f = await olx_parser(queries, max_pages, with_images, price_from, price_to, state)
 
         if f:
-            await client.send_document(
-                message.chat.id,
-                f,
-                caption=f"📦 **Результаты OLX**\n🔎 Запрос: `{query}`\n📄 Страниц: {max_pages}"
-            )
-            os.remove(f)
-            # Чистим временные картинки
-            for i in os.listdir():
-                if i.startswith("temp_img_") and i.endswith(".png"): os.remove(i)
+            caption = f"📦 **Результаты OLX**\n🔎 `{', '.join(queries)}`\n📄 Страниц: {max_pages}"
+            if filters_text:
+                caption += f"\n⚙️ Фильтры: {filters_str}"
+            if multi_mode:
+                caption += f"\n🔢 Запросов: {total}"
+
+            await client.send_document(message.chat.id, f, caption=caption)
+            remove_generated_file(f)
             await message.delete()
         else:
             await message.edit("❌ Ничего не найдено или ошибка парсера.")

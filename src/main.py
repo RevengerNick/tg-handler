@@ -3,7 +3,7 @@ import os
 import aiohttp
 from pyrogram import Client, idle
 from pyrogram.errors import SessionPasswordNeeded, PasswordHashInvalid
-from src.config import API_ID, API_HASH, PHONES, MY_DOMAIN
+from src.config import API_ID, API_HASH, PHONES, SESSIONS_DIR, WEB_PORT, ensure_runtime_dirs
 from src.services.auth_qr import login_via_qr
 from src.services.connection import check_internet as conn_check_internet, reconnect_client, check_client_health
 import uvicorn
@@ -112,7 +112,12 @@ async def interactive_auth(app: Client):
     print("Выберите метод входа:")
     print("[Enter] - QR Код (Рекомендуется, надежно)")
     print("[2]     - Номер телефона (СМС/Код)")
-    choice = input("Ваш выбор: ").strip()
+    try:
+        choice = input("Ваш выбор: ").strip()
+    except EOFError:
+        print("⚠️ Нужен интерактивный терминал для первого входа.")
+        await app.disconnect()
+        return False
 
     if choice == "2":
         # --- СТАРЫЙ МЕТОД (СМС) ---
@@ -156,21 +161,17 @@ async def interactive_auth(app: Client):
 
 # ============== WEB SERVER ==============
 
-async def start_web_server():
+async def start_web_server(server_holder: dict):
     """Запуск FastAPI сервера в фоне."""
     from src.web_server import app
     
-    # Извлекаем порт из MY_DOMAIN (напр. http://localhost:8112 -> 8112)
-    port = 8112
-    try:
-        if ":" in MY_DOMAIN.replace("://", ""):
-            port = int(MY_DOMAIN.split(":")[-1].split("/")[0])
-    except:
-        pass
+    # Внешний адрес MY_DOMAIN и локальный порт WEB_PORT настраиваются отдельно.
+    port = WEB_PORT
 
     print(f"🌐 Запуск веб-сервера на порту {port}...")
     config = uvicorn.Config(app, host="0.0.0.0", port=port, log_level="error")
     server = uvicorn.Server(config)
+    server_holder["server"] = server
     await server.serve()
 
 
@@ -178,16 +179,22 @@ async def start_web_server():
 
 async def main():
     # ЭТАП 0: ЗАПУСК ВЕБ-СЕРВЕРА
-    web_task = asyncio.create_task(start_web_server())
+    web_task = None
+    web_server = {}
 
     try:
-        if not os.path.exists("sessions"):
-            os.makedirs("sessions")
+        ensure_runtime_dirs()
+
+        if API_ID <= 0 or not API_HASH:
+            print("❌ Заполните API_ID и API_HASH в .env перед запуском.")
+            return
+
+        web_task = asyncio.create_task(start_web_server(web_server))
 
         # Инициализация клиентов
         apps = [
             Client(
-                name=f"sessions/{p.strip().replace('+', '')}",
+                name=os.path.join(SESSIONS_DIR, p.strip().replace('+', '')),
                 api_id=API_ID,
                 api_hash=API_HASH,
                 phone_number=p.strip(),
@@ -251,11 +258,16 @@ async def main():
 
     finally:
         # Останавливаем веб-сервер при выходе из main
-        web_task.cancel()
-        try:
-            await web_task
-        except asyncio.CancelledError:
-            pass
+        if web_task:
+            server = web_server.get("server")
+            if server:
+                server.should_exit = True
+            else:
+                web_task.cancel()
+            try:
+                await asyncio.wait_for(web_task, timeout=10)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
 
 
 if __name__ == "__main__":

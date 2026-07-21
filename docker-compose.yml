@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   userbot:
     build: .
@@ -10,10 +8,12 @@ services:
         limits:
           cpus: '1.50'
           memory: 1G
+    env_file:
+      - .env
     volumes:
-      - ./sessions:/app/sessions         # Сохраняем авторизацию
-      - ./settings.json:/app/settings.json # Сохраняем настройки (модель, инструкции)
-      - ./.env:/app/.env                 # Прокидываем ключи
-    # Эти параметры нужны для интерактивного ввода кода при первом входе!
+      - ./data:/app/data
+    ports:
+      - "${WEB_PORT:-8112}:${WEB_PORT:-8112}"
+    # Required for first interactive Telegram sign-in.
     stdin_open: true
     tty: true

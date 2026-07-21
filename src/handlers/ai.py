@@ -10,6 +10,7 @@ from src.services.utils import handle_stream_output
 from src.state import SETTINGS, ASYNC_CHAT_SESSIONS
 from src.config import AVAILABLE_MODELS, AVAILABLE_VOICES, VOICE_NAMES_LIST
 from src.access_filters import AccessFilter
+from src.services.files import remove_generated_file, remove_temporary_file, temporary_path
 from src.services.local_web import save_to_local_web
 import re
 
@@ -264,12 +265,12 @@ async def say_handler(client, message):
                         ogg_path,
                         caption=f"🗣 **Voice** ({v_name})"
                     )
-                    os.remove(ogg_path)
+                    remove_generated_file(ogg_path)
                 else:
                     await status.edit("⚠️ Ошибка конвертации ffmpeg. Отправляю WAV.")
                     await client.send_audio(message.chat.id, wav_path)
 
-            os.remove(wav_path)
+            remove_generated_file(wav_path)
             if message.outgoing: await message.delete()
             if status != message: await status.delete()
         else:
@@ -287,10 +288,16 @@ async def stt_handler(client, message):
             return await edit_or_reply(message, "⚠️ Ответьте на голосовое, аудио или видео.")
 
         status = await edit_or_reply(message, "👂 Скачиваю файл...")
-        path = await client.download_media(reply)
+        media = reply.voice or reply.audio or reply.video or reply.video_note
+        suggested_name = getattr(media, "file_name", None) or ("voice.ogg" if reply.voice else "media.bin")
+        path = await client.download_media(reply, file_name=temporary_path("transcription", suggested_name))
 
         await status.edit("🧠 Распознаю речь...")
-        res = await transcribe_via_gemini(path)
+        try:
+            res = await transcribe_via_gemini(path)
+        finally:
+            if path:
+                remove_temporary_file(path)
 
         # Удаляем сразу
         if os.path.exists(path): os.remove(path)
@@ -361,8 +368,8 @@ async def dialog_handler(client, message):
                 caption=f"🎭 **Dialogue** ({desc})"
             )
 
-            if ogg_path: os.remove(ogg_path)
-            os.remove(wav_path)
+            if ogg_path: remove_generated_file(ogg_path)
+            remove_generated_file(wav_path)
             if message.outgoing: await message.delete()
             if status != message: await status.delete()
         else:
@@ -402,8 +409,8 @@ async def podcast_handler(client, message):
                 ogg_path if ogg_path else wav_path,
                 caption=f"🎙 **AI Podcast**\nТема: {topic}"
             )
-            if ogg_path: os.remove(ogg_path)
-            os.remove(wav_path)
+            if ogg_path: remove_generated_file(ogg_path)
+            remove_generated_file(wav_path)
             if message.outgoing: await message.delete()
             if status != message: await status.delete()
         else:
@@ -433,7 +440,7 @@ async def imagen_handler(client, message):
                 photo=file_path,
                 caption=f"🎨 **Imagen 3**\n`{prompt}`"
             )
-            os.remove(file_path)
+            remove_generated_file(file_path)
             if message.outgoing: await message.delete()
             if status != message: await status.delete()
         else:
@@ -464,7 +471,7 @@ async def flux_handler(client, message):
                 photo=file_path,
                 caption=f"🎨 **Flux.1**\n`{prompt}`"
             )
-            os.remove(file_path)
+            remove_generated_file(file_path)
             if message.outgoing: await message.delete()
             if status != message: await status.delete()
         else:

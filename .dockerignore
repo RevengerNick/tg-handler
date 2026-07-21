@@ -1,0 +1,17 @@
+.git
+.idea
+.vscode
+.run
+.venv
+.claude
+__pycache__
+**/__pycache__
+*.py[cod]
+.env
+data
+sessions
+settings.json
+database.db
+temp_olx
+temp_img_*.png
+olx_*.xlsx

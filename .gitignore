@@ -8,6 +8,11 @@ settings.json
 **/*.session
 **/*.db
 .vscode
-.env    
+.env
 .python-version
 .claude/*
+/sessions/
+/data/
+/temp_olx/
+/temp_img_*.png
+/olx_*.xlsx

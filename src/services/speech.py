@@ -3,6 +3,7 @@ import asyncio
 import os
 from google.genai import types
 from src.services.ai_core import get_ai_client, rotate_key_and_retry
+from src.services.files import output_path
 
 
 async def transcribe_via_gemini(file_path):
@@ -142,7 +143,7 @@ async def generate_freetts(text):
                                     async with session.get(task["url"]) as audio_resp:
                                         if audio_resp.status == 200:
                                             content = await audio_resp.read()
-                                            filename = f"freetts_{int(time.time())}.mp3"
+                                            filename = output_path("audio", "freetts.mp3")
                                             with open(filename, "wb") as f: f.write(content)
                                             return filename, None
                                 elif task["status"] == "error":

@@ -7,7 +7,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
-from src.config import ROOT_DIR, MY_DOMAIN, INSTANT_VIEW_RHASH
+from src.config import ROOT_DIR, DATABASE_PATH
 import uuid
 import datetime
 
@@ -16,7 +16,7 @@ app = FastAPI()
 BASE_DIR = ROOT_DIR
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 TEMPLATES_DIR = os.path.join(BASE_DIR, "src", "templates")
-DB_PATH = os.path.join(BASE_DIR, "database.db")
+DB_PATH = DATABASE_PATH
 
 class ArticleModel(BaseModel):
     title: str

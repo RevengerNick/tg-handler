@@ -1,0 +1,4 @@
+# Необязательное ускорение Pyrogram для платформ, где TgCrypto устанавливается.
+# Основной requirements.txt намеренно работает без него, в том числе на Raspberry Pi.
+-r requirements.txt
+TgCrypto==1.2.5
