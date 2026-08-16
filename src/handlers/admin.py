@@ -208,6 +208,29 @@ async def reset_handler(client, message):
         await message.edit("Already empty")
 
 
+@Client.on_message(filters.me & filters.command(["history", "история"], prefixes="."))
+async def history_handler(client, message):
+    """Показывает последние сообщения из памяти AI текущего чата."""
+    chat = ASYNC_CHAT_SESSIONS.get(message.chat.id)
+    if not chat:
+        return await message.edit("🗒 История AI в этом чате пуста.")
+
+    try:
+        history = await chat.get_history()
+        lines = []
+        for item in history[-20:]:
+            role = "Вы" if item.role == "user" else "AI"
+            text = item.parts[0].text if item.parts else ""
+            text = " ".join(text.split())
+            if len(text) > 300:
+                text = text[:297] + "..."
+            lines.append(f"**{role}:** {text}")
+        result = "🗒 **Последние сообщения AI:**\n\n" + "\n\n".join(lines)
+        await message.edit(result[:4000])
+    except Exception as e:
+        await message.edit(f"❌ Не удалось прочитать историю: {e}")
+
+
 @Client.on_message(filters.me & filters.command(["sys", "сис"], prefixes="."))
 async def sys_handler(client, message):
     await message.edit(await get_sys_info())

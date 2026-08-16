@@ -225,13 +225,13 @@ def create_lyrics_webpage(track_data: dict) -> str:
     return html_content
 
 
-@Client.on_message(filters.command(["текст", "text", "lyric"], prefixes=".") & AccessFilter)
+@Client.on_message(filters.command(["lyric", "лирика", "песня"], prefixes=".") & AccessFilter)
 async def lyrics_handler(client, message):
     """Поиск текста песни и отправка в чат"""
     try:
         args = message.text.split(maxsplit=1)
         if len(args) < 2:
-            return await edit_or_reply(message, "🎵 Укажите название песни: `.текст Bohemian Rhapsody`")
+            return await edit_or_reply(message, "🎵 Укажите название песни: `.lyric Bohemian Rhapsody`")
         
         query = args[1].strip()
         await edit_or_reply(message, f"🔍 Ищу: *{query}*...")
@@ -260,13 +260,13 @@ async def lyrics_handler(client, message):
         await edit_or_reply(message, f"❌ Ошибка: {e}")
 
 
-@Client.on_message(filters.command(["текстт", "textt", "lyrics"], prefixes=".") & AccessFilter)
+@Client.on_message(filters.command(["lyrics", "текстпесни", "песнявеб"], prefixes=".") & AccessFilter)
 async def lyrics_web_handler(client, message):
     """Поиск текста песни и создание веб-страницы"""
     try:
         args = message.text.split(maxsplit=1)
         if len(args) < 2:
-            return await edit_or_reply(message, "🎵 Укажите название песни: `.текстт Bohemian Rhapsody`")
+            return await edit_or_reply(message, "🎵 Укажите название песни: `.lyrics Bohemian Rhapsody`")
         
         query = args[1].strip()
         await edit_or_reply(message, f"🔍 Ищу и создаю страницу: *{query}*...")

@@ -299,9 +299,6 @@ async def stt_handler(client, message):
             if path:
                 remove_temporary_file(path)
 
-        # Удаляем сразу
-        if os.path.exists(path): os.remove(path)
-
         if "error" in res: return await status.edit(f"❌ Ошибка: {res['error']}")
 
         # Форматирование результата

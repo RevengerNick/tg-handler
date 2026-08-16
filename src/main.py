@@ -1,41 +1,20 @@
 import asyncio
 import os
-import aiohttp
 from pyrogram import Client, idle
 from pyrogram.errors import SessionPasswordNeeded, PasswordHashInvalid
-from src.config import API_ID, API_HASH, PHONES, SESSIONS_DIR, WEB_PORT, ensure_runtime_dirs
+from src.config import (
+    API_ID, API_HASH, PHONES, SESSIONS_DIR, WEB_PORT, ensure_runtime_dirs,
+    HEALTH_CHECK_INTERVAL, MAX_RECONNECT_ATTEMPTS, RECONNECT_DELAY,
+    OFFLINE_RETRY_MAX_INTERVAL, RECONNECT_COOLDOWN,
+)
 from src.services.auth_qr import login_via_qr
-from src.services.connection import check_internet as conn_check_internet, reconnect_client, check_client_health
+from src.services.connection import (
+    check_internet, wait_for_internet, reconnect_client, check_client_health,
+)
 import uvicorn
 
 
 # ============== МОНИТОРИНГ СОЕДИНЕНИЯ ==============
-
-async def check_internet() -> bool:
-    """Быстрая проверка интернета через несколько DNS."""
-    urls = ["https://www.google.com", "https://telegram.org", "https://1.1.1.1"]
-    for url in urls:
-        try:
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as session:
-                async with session.get(url) as resp:
-                    if resp.status == 200:
-                        return True
-        except:
-            continue
-    return False
-
-
-async def wait_for_internet(max_wait: int = 300) -> bool:
-    """Ждёт восстановления интернета."""
-    print("⏳ Ожидание интернета...")
-    waited = 0
-    while waited < max_wait:
-        if await check_internet():
-            return True
-        await asyncio.sleep(5)
-        waited += 5
-    return False
-
 
 async def keep_alive_monitor(apps: list[Client], interval: int = 30):
     """
@@ -44,31 +23,51 @@ async def keep_alive_monitor(apps: list[Client], interval: int = 30):
     Проверяет реальное здоровье соединения через get_me(), а не только флаг is_connected.
     """
     print(f"🔁 Keep-alive monitor запущен (интервал: {interval}с)")
+    retry_after: dict[str, float] = {}
 
     while True:
         try:
             await asyncio.sleep(interval)
 
             # Проверяем интернет через TCP-сокет (быстро, без HTTP)
-            if not await conn_check_internet():
+            if not await check_internet():
                 print("🔌 Потеряно соединение с интернетом")
-
-                if await wait_for_internet(max_wait=300):
-                    print("✅ Интернет восстановлен!")
-                else:
-                    print("❌ Не удалось дождаться интернета (5 мин)")
-                    continue
+                await wait_for_internet(
+                    max_wait=None,
+                    check_interval=RECONNECT_DELAY,
+                    max_interval=OFFLINE_RETRY_MAX_INTERVAL,
+                )
+                print("✅ Интернет восстановлен!")
 
             # Проверяем реальное состояние каждого клиента (get_me(), не is_connected)
             for app in apps:
                 healthy = await check_client_health(app)
-                if not healthy:
-                    print(f"⚠️ {app.name}: соединение мёртвое, переподключаю...")
-                    ok = await reconnect_client(app, max_attempts=5)
-                    if ok:
-                        print(f"✅ {app.name} переподключен!")
-                    else:
-                        print(f"❌ {app.name}: не удалось переподключиться")
+                if healthy:
+                    retry_after.pop(app.name, None)
+                    continue
+
+                now = asyncio.get_running_loop().time()
+                if now < retry_after.get(app.name, 0):
+                    continue
+
+                print(f"⚠️ {app.name}: соединение мёртвое, переподключаю...")
+                ok = await reconnect_client(
+                    app,
+                    max_attempts=MAX_RECONNECT_ATTEMPTS,
+                    base_delay=RECONNECT_DELAY,
+                    offline_max_interval=OFFLINE_RETRY_MAX_INTERVAL,
+                )
+                if ok:
+                    retry_after.pop(app.name, None)
+                    print(f"✅ {app.name} переподключен!")
+                else:
+                    retry_after[app.name] = (
+                        asyncio.get_running_loop().time() + RECONNECT_COOLDOWN
+                    )
+                    print(
+                        f"❌ {app.name}: пока не удалось; "
+                        f"новая серия попыток через {RECONNECT_COOLDOWN} с"
+                    )
 
         except asyncio.CancelledError:
             print("🛑 Keep-alive monitor остановлен")
@@ -86,26 +85,47 @@ async def interactive_auth(app: Client):
     """
     print(f"\n🔄 Проверка сессии для: {app.name}")
 
-    try:
-        await app.connect()
-    except Exception as e:
-        print(f"⚠️ Ошибка подключения: {e}")
-        try:
-            if os.path.exists(f"{app.name}.session"):
-                os.remove(f"{app.name}.session")
-                print("🗑 Битый файл сессии удален. Попробуйте снова.")
-            return False
-        except:
+    while True:
+        for attempt in range(1, 4):
+            try:
+                await app.connect()
+                break
+            except Exception as e:
+                print(f"⚠️ Ошибка подключения ({attempt}/3): {e}")
+                # Сетевой сбой не означает, что файл сессии повреждён. Никогда
+                # не удаляем его автоматически: ждём сеть и повторяем.
+                if not await check_internet():
+                    print("⏳ Нет сети; продолжаю ждать восстановления...")
+                    await wait_for_internet(
+                        max_wait=None,
+                        check_interval=RECONNECT_DELAY,
+                        max_interval=OFFLINE_RETRY_MAX_INTERVAL,
+                    )
+                elif attempt < 3:
+                    await asyncio.sleep(RECONNECT_DELAY * attempt)
+        else:
+            print("❌ Не удалось подключить сессию; файл сессии сохранён.")
             return False
 
-    # 1. Проверяем, залогинены ли мы уже
-    try:
-        me = await app.get_me()
-        print(f"✅ Сессия активна: {me.first_name}")
-        await app.disconnect()
-        return True
-    except Exception:
-        print("👤 Требуется вход.")
+        # Проверяем, залогинены ли мы уже. Если сеть пропала ровно во время
+        # get_me(), это не должно ошибочно запускать повторную авторизацию.
+        try:
+            me = await app.get_me()
+            print(f"✅ Сессия активна: {me.first_name}")
+            await app.disconnect()
+            return True
+        except Exception:
+            if await check_internet():
+                print("👤 Требуется вход.")
+                break
+            print("⏳ Сеть пропала при проверке сессии; жду и повторяю.")
+            if app.is_connected:
+                await app.disconnect()
+            await wait_for_internet(
+                max_wait=None,
+                check_interval=RECONNECT_DELAY,
+                max_interval=OFFLINE_RETRY_MAX_INTERVAL,
+            )
 
     # 2. Выбор метода входа
     print("-----------------------------------")
@@ -208,10 +228,13 @@ async def main():
 
         # Проверяем интернет перед стартом
         if not await check_internet():
-            print("⚠️ Нет интернета при старте!")
-            if not await wait_for_internet(max_wait=60):
-                print("❌ Нет интернета. Запустите скрипт позже.")
-                return
+            print("⚠️ Нет интернета при старте; программа продолжит ждать.")
+            await wait_for_internet(
+                max_wait=None,
+                check_interval=RECONNECT_DELAY,
+                max_interval=OFFLINE_RETRY_MAX_INTERVAL,
+            )
+            print("✅ Интернет восстановлен!")
 
         # ЭТАП 1: АВТОРИЗАЦИЯ
         print("\n=== ЭТАП 1: АВТОРИЗАЦИЯ ===")
@@ -238,23 +261,34 @@ async def main():
             except Exception as e:
                 print(f"❌ Ошибка при старте {app.name}: {e}")
 
-        if started_apps:
-            print("\n🤖 Бот запущен. Нажмите Ctrl+C для остановки.")
+        if not started_apps:
+            print("⚠️ Клиенты пока не запустились; монитор продолжит попытки.")
+
+        print("\n🤖 Бот запущен. Нажмите Ctrl+C для остановки.")
             
-            # Запускаем мониторинг как ФОНОВУЮ задачу
-            monitor_task = asyncio.create_task(keep_alive_monitor(started_apps, interval=30))
+        # Мониторим все авторизованные клиенты, включая не запустившиеся из-за
+        # временной сетевой ошибки на старте.
+        monitor_task = asyncio.create_task(
+            keep_alive_monitor(valid_apps, interval=HEALTH_CHECK_INTERVAL)
+        )
             
+        try:
+            await idle()  # Это главный цикл Pyrogram для сообщений
+        finally:
+            monitor_task.cancel()
             try:
-                await idle()  # Это главный цикл Pyrogram для сообщений
-            finally:
-                monitor_task.cancel()
+                await monitor_task
+            except asyncio.CancelledError:
+                pass
+
+            for app in valid_apps:
                 try:
-                    await monitor_task
-                except asyncio.CancelledError:
-                    pass
-                
-                for app in started_apps:
-                    await app.stop()
+                    if app.is_initialized:
+                        await app.stop()
+                    elif app.is_connected:
+                        await app.disconnect()
+                except Exception as e:
+                    print(f"⚠️ Ошибка остановки {app.name}: {e}")
 
     finally:
         # Останавливаем веб-сервер при выходе из main

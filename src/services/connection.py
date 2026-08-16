@@ -1,6 +1,7 @@
 import asyncio
 import socket
 import logging
+import time
 from typing import Optional
 from pyrogram import Client
 from pyrogram.errors import (
@@ -9,16 +10,34 @@ from pyrogram.errors import (
 
 logger = logging.getLogger(__name__)
 
-async def check_internet(host: str = "8.8.8.8", port: int = 53, timeout: float = 3.0) -> bool:
-    try:
-        loop = asyncio.get_event_loop()
-        await asyncio.wait_for(
-            loop.run_in_executor(None, _sync_check_socket, host, port, timeout),
-            timeout=timeout + 1
-        )
-        return True
-    except Exception:
-        return False
+# Проверяем разные сети и порты: часть провайдеров/Raspberry Pi-сетей режет
+# публичный DNS, хотя HTTPS и Telegram при этом доступны.
+INTERNET_ENDPOINTS = (
+    ("1.1.1.1", 443),
+    ("8.8.8.8", 53),
+    ("149.154.167.50", 443),
+)
+
+async def check_internet(
+    host: Optional[str] = None,
+    port: Optional[int] = None,
+    timeout: float = 3.0,
+) -> bool:
+    endpoints = ((host, port or 53),) if host else INTERNET_ENDPOINTS
+    loop = asyncio.get_running_loop()
+    for endpoint_host, endpoint_port in endpoints:
+        try:
+            connected = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None, _sync_check_socket, endpoint_host, endpoint_port, timeout
+                ),
+                timeout=timeout + 1,
+            )
+            if connected:
+                return True
+        except (OSError, asyncio.TimeoutError):
+            continue
+    return False
 
 def _sync_check_socket(host: str, port: int, timeout: float) -> bool:
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -29,19 +48,30 @@ def _sync_check_socket(host: str, port: int, timeout: float) -> bool:
     finally:
         sock.close()
 
-async def wait_for_internet(max_wait: int = 300, check_interval: int = 5) -> bool:
-    hosts = ["8.8.8.8", "1.1.1.1", "149.154.167.50"]
-    elapsed = 0
-    current_interval = check_interval
-    
-    while elapsed < max_wait:
-        for host in hosts:
-            if await check_internet(host):
-                return True
-        await asyncio.sleep(current_interval)
-        elapsed += current_interval
-        current_interval = min(current_interval * 2, 60)
-    return False
+async def wait_for_internet(
+    max_wait: Optional[float] = None,
+    check_interval: float = 5,
+    max_interval: float = 600,
+) -> bool:
+    """Ждёт сеть с backoff; ``max_wait=None`` означает ждать бесконечно."""
+    started = time.monotonic()
+    current_interval = max(1.0, check_interval)
+    max_interval = max(current_interval, max_interval)
+
+    while True:
+        if await check_internet():
+            return True
+
+        elapsed = time.monotonic() - started
+        if max_wait is not None and elapsed >= max_wait:
+            return False
+
+        sleep_for = current_interval
+        if max_wait is not None:
+            sleep_for = min(sleep_for, max_wait - elapsed)
+        logger.warning("Интернет недоступен; следующая проверка через %.0f с", sleep_for)
+        await asyncio.sleep(max(0, sleep_for))
+        current_interval = min(current_interval * 2, max_interval)
 
 async def _force_disconnect(client: Client) -> None:
     """
@@ -76,13 +106,21 @@ async def _force_disconnect(client: Client) -> None:
         client.is_initialized = False
 
 
-async def reconnect_client(client: Client, max_attempts: int = 5, base_delay: int = 5) -> bool:
+async def reconnect_client(
+    client: Client,
+    max_attempts: int = 5,
+    base_delay: int = 5,
+    offline_max_interval: int = 600,
+) -> bool:
     client_name = getattr(client, 'name', 'unknown')
     for attempt in range(1, max_attempts + 1):
         try:
             if not await check_internet():
-                if not await wait_for_internet():
-                    return False
+                await wait_for_internet(
+                    max_wait=None,
+                    check_interval=base_delay,
+                    max_interval=offline_max_interval,
+                )
 
             await _force_disconnect(client)
             await asyncio.sleep(2)

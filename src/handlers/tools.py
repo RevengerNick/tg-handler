@@ -98,13 +98,11 @@ async def stats_handler(client, message):
 # --- УДАЛЕНИЕ ПРОБЕЛОВ ---
 @Client.on_message(filters.command(["s", "c", "с"], prefixes=".") & AccessFilter)
 async def strip_handler(client, message):
-    try:
-        parts = message.text.split(maxsplit=1)
-        if len(parts) > 1:
-            clean_text = parts[1].replace(" ", "")
-            await message.edit(clean_text)
-    except:
-        pass
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        return await edit_or_reply(message, "⚠️ Пример: `.s текст с пробелами`")
+    clean_text = parts[1].replace(" ", "")
+    await edit_or_reply(message, clean_text)
 
 
 # --- ЗАГРУЗЧИК (Только админ) ---
@@ -280,12 +278,16 @@ async def spam_handler(client, message):
     try:
         _, count, text = message.text.split(maxsplit=2)
         count = int(count)
-        await message.delete()
+        if not 1 <= count <= 100:
+            return await message.edit("⚠️ Количество должно быть от 1 до 100.")
         for _ in range(count):
             await client.send_message(message.chat.id, text)
             await asyncio.sleep(0.3)
-    except:
-        pass
+        await message.delete()
+    except (ValueError, IndexError):
+        await message.edit("⚠️ Пример: `.spam 5 текст`")
+    except Exception as e:
+        await message.edit(f"❌ Ошибка spam: {e}")
 
 
 @Client.on_message(filters.me & filters.command(["spam0", "спам0"], prefixes="."))
@@ -293,11 +295,17 @@ async def spam0_handler(client, message):
     try:
         _, count, text = message.text.split(maxsplit=2)
         count = int(count)
-        await message.delete()
+        if not 1 <= count <= 100:
+            return await message.edit("⚠️ Количество должно быть от 1 до 100.")
         msg = (text + "\n") * count
+        if len(msg) > 4000:
+            return await message.edit("⚠️ Итоговое сообщение длиннее 4000 символов.")
         await client.send_message(message.chat.id, msg)
-    except:
-        pass
+        await message.delete()
+    except (ValueError, IndexError):
+        await message.edit("⚠️ Пример: `.spam0 5 текст`")
+    except Exception as e:
+        await message.edit(f"❌ Ошибка spam0: {e}")
 
 
 @Client.on_message(filters.me & filters.command(["spam1", "спам1"], prefixes="."))
@@ -305,22 +313,28 @@ async def spam1_handler(client, message):
     try:
         _, count, text = message.text.split(maxsplit=2)
         count = int(count)
-        await message.delete()
+        if not 1 <= count <= 100:
+            return await message.edit("⚠️ Количество должно быть от 1 до 100.")
         msg = text * count
+        if len(msg) > 4000:
+            return await message.edit("⚠️ Итоговое сообщение длиннее 4000 символов.")
         await client.send_message(message.chat.id, msg)
-    except:
-        pass
+        await message.delete()
+    except (ValueError, IndexError):
+        await message.edit("⚠️ Пример: `.spam1 5 текст`")
+    except Exception as e:
+        await message.edit(f"❌ Ошибка spam1: {e}")
 
 
 # --- FUN / ARTS ---
 @Client.on_message(filters.command(["sar", "сар"], prefixes=".") & AccessFilter)
 async def sar_handler(client, message):
-    try:
-        text = message.text.split(maxsplit=1)[1]
-        res = "".join([c.upper() if i % 2 == 0 else c.lower() for i, c in enumerate(text)])
-        await edit_or_reply(message, res)
-    except:
-        pass
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        return await edit_or_reply(message, "⚠️ Пример: `.sar какой-нибудь текст`")
+    text = parts[1]
+    res = "".join([c.upper() if i % 2 == 0 else c.lower() for i, c in enumerate(text)])
+    await edit_or_reply(message, res)
 
 
 @Client.on_message(filters.command(["шрек", "shrek"], prefixes=".") & AccessFilter)

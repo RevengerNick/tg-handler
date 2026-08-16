@@ -75,10 +75,27 @@ docker compose logs -f userbot
 
 ## Raspberry Pi и запуск без браузера
 
-Основной образ подходит для ПК и сохраняет изображения в OLX-отчётах. На
-Raspberry Pi рекомендуется облегчённый профиль: в нём нет Chromium,
-ChromeDriver и `TgCrypto`, поэтому сборка и запуск не зависят от браузерного
-драйвера или нативного крипто-модуля.
+На Raspberry Pi Docker не обязателен. Для обычного запуска установите Python,
+`ffmpeg` и системные библиотеки, затем используйте основной список зависимостей
+без `TgCrypto` и принудительно включите лёгкий OLX-поиск:
+
+```bash
+sudo apt update
+sudo apt install -y python3-venv ffmpeg
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+cp .env.example .env
+# заполните .env и установите OLX_SEARCH_MODE=http
+python -m src.main
+```
+
+`requirements.txt` не требует `TgCrypto`: Pyrogram работает без ускорителя,
+поэтому ошибка сборки нативного модуля больше не блокирует запуск на ARM.
+Основной Docker-образ подходит для ПК и сохраняет изображения в OLX-отчётах.
+Если Docker всё же нужен на Raspberry Pi, используйте облегчённый профиль без
+Chromium, ChromeDriver и `TgCrypto`:
 
 ```bash
 cp .env.example .env
@@ -109,6 +126,27 @@ OLX может ограничить HTTP-запросы или изменить 
 бот не упадёт, а вернёт обычное сообщение, что объявлений не найдено; логи
 покажут причину. Переключите режим на `browser`, если на устройстве есть
 исправный Chromium и ChromeDriver.
+
+### Восстановление после пропадания сети
+
+Клиент больше не завершает работу и не удаляет Telegram-сессию из-за временной
+ошибки сети. Он ждёт интернет без конечного таймаута, проверяя несколько
+доступных адресов. Интервал проверок постепенно растёт от 5 секунд максимум до
+10 минут, а после восстановления сети Pyrogram запускается заново.
+
+Параметры можно изменить в `.env`:
+
+```dotenv
+HEALTH_CHECK_INTERVAL=30
+MAX_RECONNECT_ATTEMPTS=10
+RECONNECT_DELAY=5
+OFFLINE_RETRY_MAX_INTERVAL=600
+RECONNECT_COOLDOWN=600
+```
+
+`OFFLINE_RETRY_MAX_INTERVAL` — максимальная пауза между проверками интернета,
+а `RECONNECT_COOLDOWN` — пауза между сериями попыток подключения к Telegram.
+Даже после неудачной серии монитор остаётся запущен и пробует снова.
 
 ## Данные и результаты
 
