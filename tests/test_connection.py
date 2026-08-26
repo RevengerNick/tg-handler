@@ -18,6 +18,11 @@ def load_connection_module():
         setattr(errors, name, type(name, (Exception,), {}))
     sys.modules.setdefault("pyrogram", pyrogram)
     sys.modules.setdefault("pyrogram.errors", errors)
+    raw = types.ModuleType("pyrogram.raw")
+    raw.functions = types.SimpleNamespace(
+        Ping=type("Ping", (), {"__init__": lambda self, **kwargs: self.__dict__.update(kwargs)})
+    )
+    sys.modules.setdefault("pyrogram.raw", raw)
 
     path = Path(__file__).resolve().parents[1] / "src" / "services" / "connection.py"
     spec = importlib.util.spec_from_file_location("connection_under_test", path)
@@ -46,6 +51,27 @@ class ConnectionRetryTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(connected)
         self.assertEqual(3, check.await_count)
         self.assertEqual([call(5), call(10)], sleep.await_args_list)
+
+    async def test_healthcheck_uses_ping_instead_of_get_me(self):
+        client = types.SimpleNamespace(
+            is_connected=True,
+            invoke=AsyncMock(return_value=object()),
+            get_me=AsyncMock(side_effect=AssertionError("get_me must not be called")),
+        )
+
+        healthy = await connection.check_client_health(client)
+
+        self.assertTrue(healthy)
+        client.invoke.assert_awaited_once()
+        client.get_me.assert_not_awaited()
+
+    async def test_floodwait_does_not_mark_live_connection_dead(self):
+        client = types.SimpleNamespace(
+            is_connected=True,
+            invoke=AsyncMock(side_effect=connection.FloodWait()),
+        )
+
+        self.assertTrue(await connection.check_client_health(client))
 
 
 if __name__ == "__main__":

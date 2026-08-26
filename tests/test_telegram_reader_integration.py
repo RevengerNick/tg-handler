@@ -35,6 +35,7 @@ def message(peer, mid, text, outgoing=False, sender_bot=False, link=None):
 class FakeClient:
     def __init__(self):
         self.me = SimpleNamespace(id=999)
+        self.get_me_calls = 0
         self.person = chat(10)
         self.bot = chat(20, bot=True, name="Bot")
         self.channel = chat(-1001, kind="channel", name="AI News", username="ainews")
@@ -49,6 +50,7 @@ class FakeClient:
         self.handlers = []
 
     async def get_me(self):
+        self.get_me_calls += 1
         return self.me
 
     async def get_dialogs(self):
@@ -99,7 +101,7 @@ class ReaderIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.repo = ReaderRepository(self.db)
         self.registry = ClientRegistry()
         self.client = FakeClient()
-        await self.registry.add(self.client)
+        await self.registry.add(self.client, self_id=self.client.me.id)
         self.settings = settings(db_path)
         self.unread = UnreadService(self.registry, self.repo, self.settings)
 
@@ -124,6 +126,15 @@ class ReaderIntegrationTest(unittest.IsolatedAsyncioTestCase):
         with self.db.connection() as connection:
             peer_types = {row[0] for row in connection.execute("SELECT type FROM peers")}
         self.assertEqual({"private"}, peer_types)
+        self.assertEqual(0, self.client.get_me_calls)
+
+    async def test_registry_caches_identity_and_deduplicates_registration(self):
+        registry = ClientRegistry()
+        client = FakeClient()
+        self.assertTrue(await registry.add(client, self_id=client.me.id))
+        self.assertFalse(await registry.add(client))
+        self.assertEqual(999, await registry.self_id())
+        self.assertEqual(0, client.get_me_calls)
 
     async def test_prepare_is_read_only_and_confirm_acknowledges_exact_max_id(self):
         boundary = {10: {"read_inbox_max_id": 0, "unread_count": 2, "last_message_id": 2}}

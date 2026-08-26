@@ -20,8 +20,8 @@ class UnreadService:
     async def reconcile(self) -> dict[str, int]:
         async with self._reconcile_lock:
             client = self.registry.primary()
-            me = await client.get_me()
-            dialogs = [dialog async for dialog in private_human_dialogs(client, int(me.id))]
+            self_id = await self.registry.self_id(client)
+            dialogs = [dialog async for dialog in private_human_dialogs(client, self_id)]
             boundaries = await fetch_read_boundaries(client, [dialog.chat.id for dialog in dialogs])
             ingested = 0
             for dialog in dialogs:
@@ -39,7 +39,7 @@ class UnreadService:
                     async for message in client.get_chat_history(peer_id, limit=limit):
                         if int(message.id) <= int(state["read_inbox_max_id"]):
                             break
-                        if not is_real_private_incoming(message, int(me.id)):
+                        if not is_real_private_incoming(message, self_id):
                             continue
                         await asyncio.to_thread(
                             self.repository.upsert_message,

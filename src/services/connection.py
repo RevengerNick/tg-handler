@@ -141,15 +141,22 @@ async def reconnect_client(
 
 async def check_client_health(client: Client) -> bool:
     """
-    Проверяет реальное здоровье соединения.
-    Сначала смотрит на флаг is_connected, затем делает лёгкий RPC-запрос get_me().
-    get_me() выявляет "зомби"-соединения, где сокет мёртв, но флаг ещё True.
+    Проверяет реальное здоровье соединения лёгким MTProto ping.
+
+    ``get_me()`` здесь использовать нельзя: Pyrogram отправляет
+    ``users.GetFullUser``, а периодический healthcheck быстро упирается в
+    FloodWait. Сам FloodWait также подтверждает, что соединение с Telegram
+    живо, и не должен запускать переподключение.
     """
     try:
         if not client.is_connected:
             return False
-        # Пинг реального сервера — выявляет мёртвые сокеты
-        await asyncio.wait_for(client.get_me(), timeout=10)
+        from pyrogram.raw import functions
+
+        ping_id = time.time_ns() & ((1 << 63) - 1)
+        await asyncio.wait_for(client.invoke(functions.Ping(ping_id=ping_id)), timeout=10)
+        return True
+    except FloodWait:
         return True
     except asyncio.TimeoutError:
         return False

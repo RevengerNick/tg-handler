@@ -31,9 +31,10 @@ class ReaderRuntime:
         self.search = SearchService(self.registry, self.repository, self.settings, self.unread)
         self.mark_read = MarkReadService(self.registry, self.repository, self.settings, self.unread)
 
-    async def register_client(self, client: Any) -> None:
-        await self.registry.add(client)
-        await install_handlers(client, self)
+    async def register_client(self, client: Any, self_id: int | None = None) -> None:
+        added = await self.registry.add(client, self_id=self_id)
+        if added:
+            await install_handlers(client, self)
         try:
             await self.unread.reconcile()
         except Exception as error:
@@ -44,9 +45,9 @@ class ReaderRuntime:
 
     async def ingest_message(self, message: Any) -> None:
         client = self.registry.primary()
-        me = await client.get_me()
+        self_id = await self.registry.self_id(client)
         chat = getattr(message, "chat", None)
-        if not is_private_human_chat(chat, int(me.id)) or getattr(message, "service", None) is not None:
+        if not is_private_human_chat(chat, self_id) or getattr(message, "service", None) is not None:
             return
         peer_id = int(chat.id)
         await asyncio.to_thread(self.repository.upsert_peer, peer_record(chat))

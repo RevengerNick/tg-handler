@@ -135,7 +135,7 @@ class SearchService:
         if cached is not None:
             return {**cached, "cache_hit": True}
         client = self.registry.primary()
-        me = await client.get_me()
+        self_id = await self.registry.self_id(client)
         local = await asyncio.to_thread(
             self.repository.search_local, "private", query, self.settings.max_search_candidates,
         )
@@ -170,11 +170,11 @@ class SearchService:
                 )
                 async for message in source:
                     item = await self._ingest_server_message(message)
-                    if item and is_private_human_chat(message.chat, int(me.id)):
+                    if item and is_private_human_chat(message.chat, self_id):
                         server_rows.append(item)
         else:
             async for message in client.search_global(query=query, limit=self.settings.max_search_candidates):
-                if not is_private_human_chat(getattr(message, "chat", None), int(me.id)):
+                if not is_private_human_chat(getattr(message, "chat", None), self_id):
                     continue
                 item = await self._ingest_server_message(message)
                 if item:

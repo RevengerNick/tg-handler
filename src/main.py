@@ -21,7 +21,7 @@ async def keep_alive_monitor(apps: list[Client], interval: int = 30, on_reconnec
     """
     Фоновый мониторинг соединения.
     НЕ БЛОКИРУЕТ обработку сообщений - работает параллельно с idle().
-    Проверяет реальное здоровье соединения через get_me(), а не только флаг is_connected.
+    Проверяет реальное здоровье соединения через лёгкий MTProto ping.
     """
     print(f"🔁 Keep-alive monitor запущен (интервал: {interval}с)")
     retry_after: dict[str, float] = {}
@@ -40,7 +40,7 @@ async def keep_alive_monitor(apps: list[Client], interval: int = 30, on_reconnec
                 )
                 print("✅ Интернет восстановлен!")
 
-            # Проверяем реальное состояние каждого клиента (get_me(), не is_connected)
+            # Проверяем реальное состояние каждого клиента, не запрашивая профиль.
             for app in apps:
                 healthy = await check_client_health(app)
                 if healthy:
@@ -267,7 +267,7 @@ async def main():
                 print(f"🟢 {me.first_name} онлайн и готов к работе!")
                 started_apps.append(app)
                 if reader_runtime.settings.enabled:
-                    await reader_runtime.register_client(app)
+                    await reader_runtime.register_client(app, self_id=int(me.id))
             except Exception as e:
                 print(f"❌ Ошибка при старте Telegram client: {type(e).__name__}")
 
