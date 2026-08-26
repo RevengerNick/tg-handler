@@ -5,6 +5,8 @@ import logging
 import threading
 from typing import Any, Iterable
 
+from pyrogram.errors import FloodWait
+
 from .config import get_reader_settings
 from .services import MarkReadService, SearchService, UnreadService
 from .storage import Database
@@ -32,13 +34,21 @@ class ReaderRuntime:
         self.mark_read = MarkReadService(self.registry, self.repository, self.settings, self.unread)
 
     async def register_client(self, client: Any, self_id: int | None = None) -> None:
+        if self.registry.ready and client is not self.registry.primary():
+            logger.info(
+                "Telegram Reader uses the first configured account only; additional client %s is ignored by Reader",
+                getattr(client, "name", "unknown"),
+            )
+            return
         added = await self.registry.add(client, self_id=self_id)
         if added:
             await install_handlers(client, self)
-        try:
-            await self.unread.reconcile()
-        except Exception as error:
-            logger.warning("Initial Telegram Reader reconciliation failed: %s", type(error).__name__)
+            sync = await self.unread.reconcile()
+            if not sync.get("refreshed"):
+                logger.warning(
+                    "Initial Telegram Reader reconciliation deferred: %s (retry in %ss)",
+                    sync.get("reason", "unknown"), sync.get("retry_after_seconds", 0),
+                )
 
     async def unregister_client(self, client: Any) -> None:
         await self.registry.remove(client)
@@ -53,7 +63,16 @@ class ReaderRuntime:
         await asyncio.to_thread(self.repository.upsert_peer, peer_record(chat))
         state = await asyncio.to_thread(self.repository.get_dialog_state, peer_id)
         if state is None:
-            boundaries = await fetch_read_boundaries(client, [peer_id])
+            try:
+                boundaries = await fetch_read_boundaries(client, [peer_id])
+            except FloodWait as error:
+                seconds = int(getattr(error, "value", 30) or 30)
+                self.unread.defer_for_flood_wait(seconds)
+                logger.warning(
+                    "Telegram Reader event ingestion deferred after FloodWait for peer %s",
+                    peer_id,
+                )
+                return
             state = boundaries.get(peer_id, {"read_inbox_max_id": 0, "unread_count": 0, "last_message_id": int(message.id)})
         await asyncio.to_thread(
             self.repository.upsert_message,

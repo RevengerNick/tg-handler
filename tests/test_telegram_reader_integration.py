@@ -2,12 +2,16 @@ import ast
 import asyncio
 import tempfile
 import unittest
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from pyrogram.errors import FloodWait
+
 from src.telegram_reader.config.settings import ReaderSettings
+from src.telegram_reader.runtime import ReaderRuntime
 from src.telegram_reader.services import MarkReadService, SearchService, UnreadService
 from src.telegram_reader.storage import Database
 from src.telegram_reader.storage.repositories import ReaderRepository
@@ -40,9 +44,9 @@ class FakeClient:
         self.bot = chat(20, bot=True, name="Bot")
         self.channel = chat(-1001, kind="channel", name="AI News", username="ainews")
         self.dialogs = [
-            SimpleNamespace(chat=self.person, folder_id=0),
-            SimpleNamespace(chat=self.bot, folder_id=0),
-            SimpleNamespace(chat=self.channel, folder_id=0),
+            SimpleNamespace(chat=self.person, folder_id=0, unread_messages_count=2),
+            SimpleNamespace(chat=self.bot, folder_id=0, unread_messages_count=0),
+            SimpleNamespace(chat=self.channel, folder_id=0, unread_messages_count=0),
         ]
         self.histories = {10: [message(self.person, 2, "Второе сообщение"), message(self.person, 1, "Первое сообщение")]}
         self.global_results = []
@@ -53,8 +57,8 @@ class FakeClient:
         self.get_me_calls += 1
         return self.me
 
-    async def get_dialogs(self):
-        for item in self.dialogs:
+    async def get_dialogs(self, limit=0):
+        for item in self.dialogs[:limit or None]:
             yield item
 
     async def get_chat_history(self, peer_id, limit=0, **_kwargs):
@@ -88,7 +92,9 @@ def settings(database_path):
         require_cf_access=False, cf_client_id="", cf_client_secret="",
         body_limit_bytes=262144, rate_limit_per_minute=60,
         reservation_ttl_seconds=180, confirmation_ttl_seconds=300,
-        max_unread_messages=500, max_search_candidates=150, timezone="Asia/Tashkent",
+        max_unread_messages=500, max_search_candidates=150,
+        reconcile_min_interval_seconds=0, max_dialogs_per_reconcile=500,
+        timezone="Asia/Tashkent",
     )
 
 
@@ -135,6 +141,58 @@ class ReaderIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(await registry.add(client))
         self.assertEqual(999, await registry.self_id())
         self.assertEqual(0, client.get_me_calls)
+
+    async def test_reconcile_reuses_recent_success_instead_of_retrying_telegram(self):
+        throttled = UnreadService(
+            self.registry,
+            self.repo,
+            replace(self.settings, reconcile_min_interval_seconds=60),
+        )
+        boundary = {10: {"read_inbox_max_id": 0, "unread_count": 2, "last_message_id": 2}}
+        fetch = AsyncMock(return_value=boundary)
+        with patch("src.telegram_reader.services.unread_service.fetch_read_boundaries", new=fetch):
+            first = await throttled.reconcile()
+            second = await throttled.reconcile()
+
+        self.assertTrue(first["performed"])
+        self.assertTrue(second["refreshed"])
+        self.assertFalse(second["performed"])
+        self.assertEqual("recent", second["reason"])
+        self.assertEqual(1, fetch.await_count)
+
+    async def test_floodwait_becomes_one_cooldown_instead_of_retries_or_error(self):
+        throttled = UnreadService(
+            self.registry,
+            self.repo,
+            replace(self.settings, reconcile_min_interval_seconds=60),
+        )
+        fetch = AsyncMock(side_effect=FloodWait(18))
+        with patch("src.telegram_reader.services.unread_service.fetch_read_boundaries", new=fetch):
+            first = await throttled.reconcile()
+            second = await throttled.reconcile()
+
+        self.assertFalse(first["refreshed"])
+        self.assertEqual("flood_wait", first["reason"])
+        self.assertGreaterEqual(first["retry_after_seconds"], 60)
+        self.assertFalse(second["performed"])
+        self.assertEqual("flood_wait", second["reason"])
+        self.assertEqual(1, fetch.await_count)
+
+    async def test_reader_uses_only_first_account(self):
+        runtime = SimpleNamespace(
+            registry=ClientRegistry(),
+            unread=SimpleNamespace(reconcile=AsyncMock(return_value={"refreshed": True})),
+        )
+        first, second = FakeClient(), FakeClient()
+        install = AsyncMock()
+        with patch("src.telegram_reader.runtime.install_handlers", new=install):
+            await ReaderRuntime.register_client(runtime, first, self_id=999)
+            await ReaderRuntime.register_client(runtime, second, self_id=888)
+
+        self.assertEqual(1, runtime.registry.count)
+        self.assertIs(first, runtime.registry.primary())
+        self.assertEqual(1, install.await_count)
+        self.assertEqual(1, runtime.unread.reconcile.await_count)
 
     async def test_prepare_is_read_only_and_confirm_acknowledges_exact_max_id(self):
         boundary = {10: {"read_inbox_max_id": 0, "unread_count": 2, "last_message_id": 2}}

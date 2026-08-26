@@ -161,6 +161,15 @@ class ReaderRepository:
             row = connection.execute("SELECT * FROM dialog_state WHERE peer_id=?", (peer_id,)).fetchone()
             return _row(row) or None
 
+    def unread_peer_ids(self) -> set[int]:
+        """Peers whose locally cached unread state still needs reconciliation."""
+        with self.database.connection() as connection:
+            rows = connection.execute(
+                """SELECT DISTINCT peer_id FROM messages
+                WHERE telegram_unread=1 AND direction='incoming' AND deleted_at IS NULL"""
+            ).fetchall()
+        return {int(row["peer_id"]) for row in rows}
+
     def find_people(self, query: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
         bounded = max(1, min(100, limit))
         with self.database.connection() as connection:

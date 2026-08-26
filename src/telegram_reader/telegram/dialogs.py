@@ -46,8 +46,8 @@ def is_channel_chat(chat: Any) -> bool:
     return type_name(chat) == "channel"
 
 
-async def private_human_dialogs(client: Any, self_id: int) -> AsyncIterator[Any]:
-    async for dialog in client.get_dialogs():
+async def private_human_dialogs(client: Any, self_id: int, limit: int = 500) -> AsyncIterator[Any]:
+    async for dialog in client.get_dialogs(limit=max(1, int(limit))):
         if is_private_human_chat(dialog.chat, self_id):
             yield dialog
 

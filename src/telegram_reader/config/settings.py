@@ -36,6 +36,8 @@ class ReaderSettings:
     confirmation_ttl_seconds: int
     max_unread_messages: int
     max_search_candidates: int
+    reconcile_min_interval_seconds: int
+    max_dialogs_per_reconcile: int
     timezone: str
 
     @property
@@ -65,5 +67,9 @@ def get_reader_settings() -> ReaderSettings:
         confirmation_ttl_seconds=_int("TG_READER_CONFIRMATION_TTL_SECONDS", 300, 30, 900),
         max_unread_messages=_int("TG_READER_MAX_UNREAD_MESSAGES", 500, 20, 2_000),
         max_search_candidates=_int("TG_READER_MAX_SEARCH_CANDIDATES", 150, 20, 300),
+        reconcile_min_interval_seconds=_int(
+            "TG_READER_RECONCILE_MIN_INTERVAL_SECONDS", 60, 15, 3_600,
+        ),
+        max_dialogs_per_reconcile=_int("TG_READER_MAX_DIALOGS", 500, 50, 2_000),
         timezone=os.getenv("TG_READER_TIMEZONE", "Asia/Tashkent").strip() or "Asia/Tashkent",
     )

@@ -28,7 +28,9 @@ def settings(**changes):
         require_cf_access=True, cf_client_id="cf-id", cf_client_secret="cf-secret",
         body_limit_bytes=1024, rate_limit_per_minute=20,
         reservation_ttl_seconds=180, confirmation_ttl_seconds=300,
-        max_unread_messages=500, max_search_candidates=150, timezone="Asia/Tashkent",
+        max_unread_messages=500, max_search_candidates=150,
+        reconcile_min_interval_seconds=60, max_dialogs_per_reconcile=500,
+        timezone="Asia/Tashkent",
     )
     return replace(base, **changes)
 

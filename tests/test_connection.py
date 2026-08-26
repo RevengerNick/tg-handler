@@ -16,19 +16,19 @@ def load_connection_module():
         "UserDeactivated", "FloodWait",
     ):
         setattr(errors, name, type(name, (Exception,), {}))
-    sys.modules.setdefault("pyrogram", pyrogram)
-    sys.modules.setdefault("pyrogram.errors", errors)
     raw = types.ModuleType("pyrogram.raw")
     raw.functions = types.SimpleNamespace(
         Ping=type("Ping", (), {"__init__": lambda self, **kwargs: self.__dict__.update(kwargs)})
     )
-    sys.modules.setdefault("pyrogram.raw", raw)
-
     path = Path(__file__).resolve().parents[1] / "src" / "services" / "connection.py"
     spec = importlib.util.spec_from_file_location("connection_under_test", path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+    with patch.dict(
+        sys.modules,
+        {"pyrogram": pyrogram, "pyrogram.errors": errors, "pyrogram.raw": raw},
+    ):
+        spec.loader.exec_module(module)
     return module
 
 
