@@ -1,0 +1,15 @@
+# Optional override for the future 1 vCPU / 2 GB OVH host.
+# Deployment and session transfer are intentionally manual.
+services:
+  userbot:
+    build:
+      context: .
+      dockerfile: Dockerfile.lite
+    environment:
+      OLX_SEARCH_MODE: http
+      WEB_BIND_HOST: 0.0.0.0
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1536M

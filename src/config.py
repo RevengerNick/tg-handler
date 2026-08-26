@@ -82,6 +82,7 @@ EXCHANGE_KEY = os.getenv("EXCHANGE_API_KEY")
 # Web Server & Connection Settings
 MY_DOMAIN = os.getenv("MY_DOMAIN", "http://localhost:8112")
 WEB_PORT = _get_int_env("WEB_PORT", 8112)
+WEB_BIND_HOST = os.getenv("WEB_BIND_HOST", "127.0.0.1").strip() or "127.0.0.1"
 INSTANT_VIEW_RHASH = os.getenv("RHASH", "fdaa3d91fdb6eb") # Хеш для IV, если есть
 HEALTH_CHECK_INTERVAL = max(1, _get_int_env("HEALTH_CHECK_INTERVAL", 30))
 MAX_RECONNECT_ATTEMPTS = max(1, _get_int_env("MAX_RECONNECT_ATTEMPTS", 10))

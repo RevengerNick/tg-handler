@@ -1,0 +1,8 @@
+# Replace the hostname yourself when the VPS and Cloudflare Access application exist.
+tunnel: YOUR_TUNNEL_ID
+credentials-file: /etc/cloudflared/YOUR_TUNNEL_ID.json
+
+ingress:
+  - hostname: tg-reader.example.com
+    service: http://127.0.0.1:8112
+  - service: http_status:404

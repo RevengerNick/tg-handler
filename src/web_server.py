@@ -8,10 +8,12 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from src.config import ROOT_DIR, DATABASE_PATH
+from src.telegram_reader.api import attach_reader_api
 import uuid
 import datetime
 
 app = FastAPI()
+attach_reader_api(app)
 
 BASE_DIR = ROOT_DIR
 STATIC_DIR = os.path.join(BASE_DIR, "static")

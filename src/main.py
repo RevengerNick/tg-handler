@@ -3,7 +3,7 @@ import os
 from pyrogram import Client, idle
 from pyrogram.errors import SessionPasswordNeeded, PasswordHashInvalid
 from src.config import (
-    API_ID, API_HASH, PHONES, SESSIONS_DIR, WEB_PORT, ensure_runtime_dirs,
+    API_ID, API_HASH, PHONES, SESSIONS_DIR, WEB_PORT, WEB_BIND_HOST, ensure_runtime_dirs,
     HEALTH_CHECK_INTERVAL, MAX_RECONNECT_ATTEMPTS, RECONNECT_DELAY,
     OFFLINE_RETRY_MAX_INTERVAL, RECONNECT_COOLDOWN,
 )
@@ -11,12 +11,13 @@ from src.services.auth_qr import login_via_qr
 from src.services.connection import (
     check_internet, wait_for_internet, reconnect_client, check_client_health,
 )
+from src.telegram_reader import get_runtime as get_reader_runtime
 import uvicorn
 
 
 # ============== МОНИТОРИНГ СОЕДИНЕНИЯ ==============
 
-async def keep_alive_monitor(apps: list[Client], interval: int = 30):
+async def keep_alive_monitor(apps: list[Client], interval: int = 30, on_reconnect=None):
     """
     Фоновый мониторинг соединения.
     НЕ БЛОКИРУЕТ обработку сообщений - работает параллельно с idle().
@@ -50,7 +51,7 @@ async def keep_alive_monitor(apps: list[Client], interval: int = 30):
                 if now < retry_after.get(app.name, 0):
                     continue
 
-                print(f"⚠️ {app.name}: соединение мёртвое, переподключаю...")
+                print("⚠️ Telegram client: соединение мёртвое, переподключаю...")
                 ok = await reconnect_client(
                     app,
                     max_attempts=MAX_RECONNECT_ATTEMPTS,
@@ -59,13 +60,18 @@ async def keep_alive_monitor(apps: list[Client], interval: int = 30):
                 )
                 if ok:
                     retry_after.pop(app.name, None)
-                    print(f"✅ {app.name} переподключен!")
+                    print("✅ Telegram client переподключен!")
+                    if on_reconnect is not None:
+                        try:
+                            await on_reconnect(app)
+                        except Exception as error:
+                            print(f"⚠️ Telegram Reader catch-up не выполнен: {type(error).__name__}")
                 else:
                     retry_after[app.name] = (
                         asyncio.get_running_loop().time() + RECONNECT_COOLDOWN
                     )
                     print(
-                        f"❌ {app.name}: пока не удалось; "
+                        "❌ Telegram client: пока не удалось; "
                         f"новая серия попыток через {RECONNECT_COOLDOWN} с"
                     )
 
@@ -73,7 +79,7 @@ async def keep_alive_monitor(apps: list[Client], interval: int = 30):
             print("🛑 Keep-alive monitor остановлен")
             break
         except Exception as e:
-            print(f"⚠️ Ошибка в мониторе: {e}")
+            print(f"⚠️ Ошибка в мониторе: {type(e).__name__}")
             await asyncio.sleep(10)
 
 
@@ -83,7 +89,7 @@ async def interactive_auth(app: Client):
     """
     Интерактивная проверка авторизации (QR или СМС).
     """
-    print(f"\n🔄 Проверка сессии для: {app.name}")
+    print("\n🔄 Проверка настроенной Telegram-сессии")
 
     while True:
         for attempt in range(1, 4):
@@ -91,7 +97,7 @@ async def interactive_auth(app: Client):
                 await app.connect()
                 break
             except Exception as e:
-                print(f"⚠️ Ошибка подключения ({attempt}/3): {e}")
+                print(f"⚠️ Ошибка подключения ({attempt}/3): {type(e).__name__}")
                 # Сетевой сбой не означает, что файл сессии повреждён. Никогда
                 # не удаляем его автоматически: ждём сеть и повторяем.
                 if not await check_internet():
@@ -142,10 +148,10 @@ async def interactive_auth(app: Client):
     if choice == "2":
         # --- СТАРЫЙ МЕТОД (СМС) ---
         try:
-            print(f"📤 Отправляю код на {app.phone_number}...")
+            print("📤 Отправляю код на настроенный номер...")
             sent = await app.send_code(app.phone_number)
         except Exception as e:
-            print(f"❌ Ошибка отправки кода: {e}")
+            print(f"❌ Ошибка отправки кода: {type(e).__name__}")
             await app.disconnect()
             return False
 
@@ -161,7 +167,7 @@ async def interactive_auth(app: Client):
                 except PasswordHashInvalid:
                     print("❌ Неверный пароль.")
             except Exception as e:
-                print(f"❌ Ошибка: {e}");
+                print(f"❌ Ошибка: {type(e).__name__}");
                 await app.disconnect();
                 return False
 
@@ -189,7 +195,7 @@ async def start_web_server(server_holder: dict):
     port = WEB_PORT
 
     print(f"🌐 Запуск веб-сервера на порту {port}...")
-    config = uvicorn.Config(app, host="0.0.0.0", port=port, log_level="error")
+    config = uvicorn.Config(app, host=WEB_BIND_HOST, port=port, log_level="error")
     server = uvicorn.Server(config)
     server_holder["server"] = server
     await server.serve()
@@ -201,6 +207,8 @@ async def main():
     # ЭТАП 0: ЗАПУСК ВЕБ-СЕРВЕРА
     web_task = None
     web_server = {}
+
+    reader_runtime = get_reader_runtime()
 
     try:
         ensure_runtime_dirs()
@@ -243,7 +251,7 @@ async def main():
             if await interactive_auth(app):
                 valid_apps.append(app)
             else:
-                print(f"⚠️ Скипаем {app.name} (не удалось войти)")
+                print("⚠️ Пропускаю Telegram client (не удалось войти)")
 
         if not valid_apps:
             print("❌ Нет активных сессий. Бот не может быть запущен.")
@@ -258,8 +266,10 @@ async def main():
                 me = await app.get_me()
                 print(f"🟢 {me.first_name} онлайн и готов к работе!")
                 started_apps.append(app)
+                if reader_runtime.settings.enabled:
+                    await reader_runtime.register_client(app)
             except Exception as e:
-                print(f"❌ Ошибка при старте {app.name}: {e}")
+                print(f"❌ Ошибка при старте Telegram client: {type(e).__name__}")
 
         if not started_apps:
             print("⚠️ Клиенты пока не запустились; монитор продолжит попытки.")
@@ -269,7 +279,11 @@ async def main():
         # Мониторим все авторизованные клиенты, включая не запустившиеся из-за
         # временной сетевой ошибки на старте.
         monitor_task = asyncio.create_task(
-            keep_alive_monitor(valid_apps, interval=HEALTH_CHECK_INTERVAL)
+            keep_alive_monitor(
+                valid_apps,
+                interval=HEALTH_CHECK_INTERVAL,
+                on_reconnect=reader_runtime.register_client if reader_runtime.settings.enabled else None,
+            )
         )
             
         try:
@@ -283,12 +297,13 @@ async def main():
 
             for app in valid_apps:
                 try:
+                    await reader_runtime.unregister_client(app)
                     if app.is_initialized:
                         await app.stop()
                     elif app.is_connected:
                         await app.disconnect()
                 except Exception as e:
-                    print(f"⚠️ Ошибка остановки {app.name}: {e}")
+                    print(f"⚠️ Ошибка остановки Telegram client: {type(e).__name__}")
 
     finally:
         # Останавливаем веб-сервер при выходе из main
