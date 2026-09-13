@@ -7,7 +7,7 @@ from src.services import ai_core
 
 class FakeResponse:
     text = "OK"
-    candidates = []
+    candidates = ()
 
 
 async def chunks():
@@ -58,8 +58,7 @@ class AiCoreAsyncContractTest(unittest.IsolatedAsyncioTestCase):
         keys_patch, client_patch = self.patches()
         with keys_patch, client_patch:
             stream = await ai_core.get_gemini_stream(None, "hello", is_chat=False)
-
-        self.assertEqual(["OK"], [chunk.text async for chunk in stream])
+            self.assertEqual(["OK"], [chunk.text async for chunk in stream])
 
     async def test_ait_awaits_async_model_method(self):
         keys_patch, client_patch = self.patches()
@@ -72,9 +71,8 @@ class AiCoreAsyncContractTest(unittest.IsolatedAsyncioTestCase):
         keys_patch, client_patch = self.patches()
         with keys_patch, client_patch:
             stream = await ai_core.get_gemini_stream(101, "hello", is_chat=True)
-
-        self.assertEqual(1, self.chats.create_calls)
-        self.assertEqual(["OK"], [chunk.text async for chunk in stream])
+            self.assertEqual(["OK"], [chunk.text async for chunk in stream])
+            self.assertEqual(1, self.chats.create_calls)
 
     async def test_chatt_creates_async_chat_synchronously_then_awaits_message(self):
         keys_patch, client_patch = self.patches()
@@ -88,9 +86,11 @@ class AiCoreAsyncContractTest(unittest.IsolatedAsyncioTestCase):
         async def broken_request():
             raise TypeError("bad await")
 
-        with patch.object(ai_core, "GEMINI_KEYS", ["one", "two", "three"]):
-            with self.assertRaisesRegex(TypeError, "bad await"):
-                await ai_core.rotate_key_and_retry(broken_request)
+        with (
+            patch.object(ai_core, "GEMINI_KEYS", ["one", "two", "three"]),
+            self.assertRaisesRegex(TypeError, "bad await"),
+        ):
+            await ai_core.rotate_key_and_retry(broken_request)
 
     def test_model_without_search_does_not_enable_empty_tool_config(self):
         with patch.dict(ai_core.SETTINGS, {"model_key": "1"}, clear=False):

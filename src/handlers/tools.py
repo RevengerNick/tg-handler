@@ -1,9 +1,7 @@
-import os
 import re
-import time
 import asyncio
 from pyrogram import Client, filters
-from src.services import edit_or_reply, get_currency, olx_parser, download_video, download_yandex_track, analyze_chat_history
+from src.services import edit_or_reply, get_currency, olx_parser, analyze_chat_history
 from src.access_filters import AccessFilter
 from src.services.files import remove_generated_file
 
@@ -104,51 +102,6 @@ async def strip_handler(client, message):
     clean_text = parts[1].replace(" ", "")
     await edit_or_reply(message, clean_text)
 
-
-# --- ЗАГРУЗЧИК (Только админ) ---
-@Client.on_message(filters.me & filters.command(["dl", "скачать", "дл"], prefixes="."))
-async def dl_handler(client, message):
-    args = message.text.split()
-    if len(args) < 2:
-        return await message.edit("❌ Ссылка?")
-
-    url = args[-1]
-    # Определение режима (0-best, 1-low, 2-audio)
-    mode = 0
-    if len(args) > 2 and args[1].isdigit():
-        mode = int(args[1])
-
-    await message.edit("📥 Скачиваю на сервер...")
-    try:
-        path = None
-        if "music.yandex" in url:
-            paths = await download_yandex_track(url)
-            path = paths[0] if paths else None
-        else:
-            path = await download_video(url, mode)
-
-        if path and os.path.exists(path):
-            await message.edit("📤 Загружаю в Telegram...")
-
-            # Прогресс бар
-            last_update_time = 0
-
-            async def progress(current, total):
-                nonlocal last_update_time
-                if time.time() - last_update_time > 2:
-                    percent = current * 100 / total
-                    try:
-                        await message.edit(f"📤 Загрузка: {percent:.1f}%"); last_update_time = time.time()
-                    except:
-                        pass
-
-            await client.send_document(message.chat.id, path, caption="✅ Готово", progress=progress)
-            remove_generated_file(path)
-            await message.delete()
-        else:
-            await message.edit("❌ Ошибка скачивания или файл не найден.")
-    except Exception as e:
-        await message.edit(f"DL Fatal Error: {e}")
 
 # --- OLX ПАРСЕР (Только админ) ---
 @Client.on_message(filters.me & filters.command(["olx", "олх"], prefixes="."))

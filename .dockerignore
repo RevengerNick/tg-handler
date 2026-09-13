@@ -9,6 +9,9 @@ __pycache__
 *.py[cod]
 .env
 data
+cookies
+cookies.txt
+*.cookies.txt
 sessions
 settings.json
 database.db

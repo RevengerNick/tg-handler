@@ -1,8 +1,8 @@
-import asyncio
-import time
 from pyrogram.errors import MessageNotModified
+
 from src.services.local_web import save_to_local_web
-from src.services.web import create_telegraph_page
+from src.services.rich_messages import send_rich_or_article
+
 
 def smart_split(text, limit=4000):
     if len(text) <= limit:
@@ -12,12 +12,15 @@ def smart_split(text, limit=4000):
         if len(text) <= limit:
             parts.append(text)
             break
-        cut = text[:limit].rfind('\n')
-        if cut == -1: cut = text[:limit].rfind(' ')
-        if cut == -1: cut = limit
+        cut = text[:limit].rfind("\n")
+        if cut == -1:
+            cut = text[:limit].rfind(" ")
+        if cut == -1:
+            cut = limit
         parts.append(text[:cut])
         text = text[cut:].lstrip()
     return parts
+
 
 async def edit_or_reply(message, text, **kwargs):
     """Редактирует свое сообщение или отвечает на чужое (с защитой от MessageNotModified)."""
@@ -32,6 +35,7 @@ async def edit_or_reply(message, text, **kwargs):
     except Exception as e:
         print(f"Edit/Reply Error: {e}")
         return message
+
 
 async def smart_reply(message, text, title="AI Response", use_markdown=True):
     """
@@ -50,47 +54,33 @@ async def smart_reply(message, text, title="AI Response", use_markdown=True):
     except Exception as e:
         await edit_or_reply(message, f"SmartSend Err: {e}")
 
-async def handle_stream_output(client, message, stream_generator, title="AI Response", header=""):
+
+async def handle_stream_output(
+    client, message, stream_generator, title="AI Response", header=""
+):
     full_text = ""
-    last_update_time = 0
-    is_web_mode = False
     current_msg = message
     try:
         async for chunk in stream_generator:
             if chunk.text:
                 full_text += chunk.text
-                if len(full_text) > 4000:
-                    if not is_web_mode:
-                        is_web_mode = True
-                        await current_msg.edit(f"{header}\n\n📝 **Ответ стал длинным.**\nГенерирую Web-статью... ⏳")
-                    continue
-                now = time.time()
-                if now - last_update_time > 1.5:
-                    try:
-                        display_text = f"{header}\n\n{full_text} █"
-                        await current_msg.edit(display_text, disable_web_page_preview=True)
-                        last_update_time = now
-                    except MessageNotModified:
-                        pass
-                    except Exception:
-                        pass
-        if is_web_mode:
-            link = await save_to_local_web(title, full_text)
-            final_view = f"{header}\n\n📝 **{title} (Longread):**\n👉 {link}"
-            await current_msg.edit(final_view)
-        else:
-            final_view = f"{header}\n\n{full_text}"
-            try:
-                await current_msg.edit(final_view, disable_web_page_preview=True)
-            except MessageNotModified:
-                pass
+        final_view = f"{header}\n\n{full_text}" if header else full_text
+        await send_rich_or_article(client, current_msg, final_view, title=title)
     except Exception as e:
-        print(f"Streaming Error: {e}")
+        print(f"Streaming Error: {type(e).__name__}")
         if full_text:
-            await current_msg.edit(f"{header}\n\n{full_text}\n\n❌ Error: {e}")
+            await send_rich_or_article(
+                client, current_msg, f"{header}\n\n{full_text}", title=title
+            )
+        else:
+            await current_msg.edit(
+                "❌ AI не смог ответить. Проверьте модель, лимиты API и ключи."
+            )
+
 
 async def get_message_context(client, message):
     from PIL import Image
+
     reply = message.reply_to_message
     if not reply:
         return "", None

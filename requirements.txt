@@ -1,11 +1,13 @@
 # Direct runtime dependencies. Versions are pinned for reproducible local and Docker builds.
-Pyrogram==2.0.106
+PyrogramMod==2.4.1
 # TgCrypto is optional. Pyrogram works without it, which keeps ARM/Raspberry Pi
 # installation reliable; see requirements-accelerated.txt for the opt-in extra.
 google-genai==2.23.0
+aiogram==3.31.0
 python-dotenv==1.2.2
 aiohttp==3.13.5
-yt-dlp==2026.3.17
+yt-dlp[default,curl-cffi]==2026.8.19
+deno==2.9.5
 yandex-music==3.0.0
 selenium==4.43.0
 Pillow==12.2.0

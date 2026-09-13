@@ -1,231 +1,255 @@
 # tg-handler
 
-Пользовательский Telegram-клиент на Pyrogram с Gemini, генерацией изображений
-и озвучки, скачиванием медиа, парсером OLX, статистикой чатов и небольшим
-веб-сервером для публикации статей.
+Персональный Telegram userbot на PyrogramMod: Gemini AI, Rich Messages,
+универсальное скачивание медиа, Telegram Reader API, голосовые инструменты,
+локальные статьи, OLX-отчёты и бытовые команды.
 
-> Это userbot: он работает от имени Telegram-аккаунта, указанного в `PHONES`.
-> Используйте его с учётом правил Telegram и чатов, в которых он включён.
+> Приложение работает от имени аккаунтов из `PHONES`. Используйте его только
+> для своих аккаунтов и контента, к которому у них есть законный доступ.
 
-## Что умеет
+## Возможности
 
-- ответы Gemini в обычном и диалоговом режиме;
-- TTS, диалоги и подкасты;
-- распознавание голосовых и видео;
-- изображения через Gemini Flash Image (Nano Banana) и Flux;
-- скачивание видео, аудио и треков Яндекс.Музыки;
-- отчёты OLX в Excel, в том числе с фильтрами;
-- статистика чата, курсы валют и локальные web-статьи.
+- `.ai` — разовый ответ Gemini как нативный Telegram RichMessage;
+- `.chat` — диалог с памятью, тоже как RichMessage;
+- `.ait` и `.chatt` — длинный ответ сразу в виде локальной web-статьи;
+- актуальные aliases `gemini-flash-latest`, `gemini-flash-lite-latest` и
+  `gemini-pro-latest`, а также закреплённая стабильная Flash-модель;
+- TTS, многоголосые диалоги, подкасты и распознавание аудио/видео;
+- изображения через Gemini и Flux;
+- интерактивный `.dl` с реальными вариантами качества;
+- быстрый `.dlo`/`.dl0` с качеством не выше 480p;
+- YouTube, Instagram Posts/Reels/Stories/Highlights, TikTok, X, Reddit и
+  другие сайты, поддерживаемые yt-dlp; Yandex Music сохранён;
+- yt-dlp как основной backend, OmniGet CLI как native fallback, ffmpeg для
+  merge/postprocessing;
+- cookies для авторизованного доступа без сохранения секретов в Git;
+- Excel-отчёты OLX, статистика чатов, валюты и Telegram Reader HTTP API.
 
-## Быстрый запуск локально
+## Как устроен downloader
 
-Нужен Python 3.12 или 3.13 и `ffmpeg` в `PATH` (для голосовых сообщений и
-скачивания медиа).
-
-```powershell
-py -3.12 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-Copy-Item .env.example .env
+```text
+.dl URL (Pyrogram userbot)
+        │
+        ├── metadata: yt-dlp → при допустимой ошибке OmniGet
+        ├── DownloadJob в data/download_jobs.db, TTL 20 минут
+        └── личное сообщение companion-бота с inline-кнопками
+                            │
+                            ▼
+                 выбор качества / cancel
+                            │
+                            ▼
+              yt-dlp → OmniGet fallback → ffmpeg/ffprobe
+                            │
+                            ▼
+       файл(ы) отправляет Pyrogram userbot в исходный чат
 ```
 
-Заполните `.env`:
+Companion-бот — только control plane. Он не отправляет скачанные файлы и
+обрабатывает callbacks только от `DOWNLOAD_CONTROL_USER_ID`. Каждая job имеет
+отдельный каталог `data/tmp/downloads/<job_id>/`; каталог удаляется после
+успеха, ошибки или отмены. Одновременно по умолчанию выполняется одна загрузка,
+максимум разрешено две — это рассчитано на небольшой VPS.
+
+### Команды скачивания
+
+```text
+.dl URL            интерактивный выбор доступного качества
+.dl best URL       лучшее качество без кнопок
+.dl 1080 URL       качество до 1080p
+.dl 720 URL        качество до 720p
+.dl 480 URL        качество до 480p
+.dl audio URL      только аудио
+.dlo URL           автоматически до 480p
+.dl0 URL           то же самое
+```
+
+Старые aliases сохранены: `0 = best`, `1 = 480`, `2 = audio`. Ссылку можно
+взять из текста/caption сообщения, ответив на него командой `.dl`. Если reply
+содержит Telegram-видео, audio или document, он не трактуется как web URL.
+
+Кнопки строятся только по реально найденным форматам. Для Instagram и
+коллекций интерфейс намеренно проще: «Скачать», «Audio», «Cancel». Carousel и
+Stories могут вернуть несколько файлов — userbot отправит их последовательно.
+
+## Rich Messages для AI
+
+`.ai` и `.chat` собирают ответ модели и отправляют его от того же user-аккаунта
+как нативный RichMessage. Markdown преобразуется в Telegram blocks: заголовки,
+абзацы, списки, таблицы, цитаты, ссылки и fenced code blocks.
+
+Rich Messages у user-аккаунтов требуют Telegram Premium и свежий Telegram
+клиент. Если сервер Telegram отклоняет этот тип сообщения либо ответ превышает
+лимит 32 768 символов, создаётся локальная статья. `.ait`/`.chatt` всегда
+создают статью напрямую. Для поддержки нового MTProto layer используется
+PyrogramMod 2.4.1 вместо архивного Pyrogram 2.0.106.
+
+## Установка
+
+Нужны Python 3.12/3.13 и `ffmpeg`/`ffprobe` в `PATH`.
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+cp .env.example .env
+python -m src.main
+```
+
+Минимальные обязательные параметры:
 
 ```dotenv
 API_ID=123456
 API_HASH=telegram_api_hash
 PHONES=998901234567
 GEMINI_API_KEYS=key_one,key_two
-MY_DOMAIN=http://localhost:8112
+MY_DOMAIN=https://example.com
 WEB_PORT=8112
 ```
 
-Затем запустите:
+При первом запуске Pyrogram предложит вход по QR или коду. Не добавляйте
+`.env`, `data/`, `*.session`, cookies или API keys в Git.
 
-```powershell
-python -m src.main
+## Companion-бот через BotFather
+
+1. Откройте `@BotFather`, выполните `/newbot` и сохраните token только в `.env`.
+2. Напишите новому боту `/start`, иначе он не сможет первым отправить личное
+   сообщение.
+3. Узнайте свой numeric Telegram user ID и задайте его как control user.
+4. Перезапустите контейнер/процесс.
+
+```dotenv
+DOWNLOAD_BOT_TOKEN=123456:secret
+DOWNLOAD_CONTROL_USER_ID=123456789
+DOWNLOAD_MAX_CONCURRENT=1
+DOWNLOAD_JOB_TTL_SECONDS=1200
+DOWNLOAD_MAX_FILES=10
 ```
 
-При первом запуске клиент предложит вход по QR-коду или номеру. Не добавляйте
-`.env`, `data/` или файлы сессий в Git.
+Без companion-бота быстрые команды `.dlo` и `.dl QUALITY URL` продолжают
+работать, а интерактивный `.dl URL` покажет понятную подсказку о настройке.
 
-## Docker
+## Cookies и авторизация
 
-Docker-образ содержит Chromium/ChromeDriver и ffmpeg. Все изменяемые данные
-монтируются в `./data`, поэтому не теряются при пересоздании контейнера.
+Создайте каталог `data/cookies/` и положите туда Netscape `cookies.txt`:
 
-```powershell
-Copy-Item .env.example .env
-# заполните .env
+```text
+data/cookies/
+├── instagram.txt
+├── youtube.txt
+└── x.txt
+```
+
+Экспортируйте cookies только из своего браузера и только для аккаунта, который
+имеет доступ к материалу. Рекомендуемые права на Linux:
+
+```bash
+chmod 700 data/cookies
+chmod 600 data/cookies/*.txt
+```
+
+Диагностика:
+
+```text
+.cookies
+.cookies test instagram
+.cookies test instagram https://www.instagram.com/.../
+.cookies test youtube https://www.youtube.com/watch?v=...
+```
+
+Команда без URL проверяет наличие, Netscape-формат и сроки записей. Вариант с
+URL делает metadata-запрос без скачивания большого файла. Значения cookies не
+выводятся в Telegram и логи. При `login required` пользователь получает
+отдельное сообщение об истёкшей авторизации вместо общей ошибки.
+
+Instagram Stories, Highlights и Close Friends доступны только тогда, когда
+экспортированная сессия действительно видит этот контент. Проект не обходит
+ограничения доступа.
+
+## Docker и VPS
+
+Полный образ включает Chromium для OLX, ffmpeg, Deno для yt-dlp EJS и OmniGet
+CLI на `amd64`:
+
+```bash
+cp .env.example .env
 docker compose up --build
-```
-
-Первый запуск оставьте в интерактивном режиме, чтобы пройти авторизацию. После
-успешного входа можно запустить сервис в фоне:
-
-```powershell
+# после первой авторизации
 docker compose up -d
 docker compose logs -f userbot
 ```
 
-Веб-сервер доступен на `http://localhost:8112` по умолчанию. Если внешний
-домен отличается от локального адреса, задайте `MY_DOMAIN` как публичный URL,
-а `WEB_PORT` оставьте портом, на котором должен слушать контейнер.
-
-## Raspberry Pi и запуск без браузера
-
-На Raspberry Pi Docker не обязателен. Для обычного запуска установите Python,
-`ffmpeg` и системные библиотеки, затем используйте основной список зависимостей
-без `TgCrypto` и принудительно включите лёгкий OLX-поиск:
+Для небольшого VPS используется лёгкий override:
 
 ```bash
-sudo apt update
-sudo apt install -y python3-venv ffmpeg
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-cp .env.example .env
-# заполните .env и установите OLX_SEARCH_MODE=http
-python -m src.main
+docker compose -f docker-compose.yml -f docker-compose.vps.yml up -d --build
+docker compose -f docker-compose.yml -f docker-compose.vps.yml logs -f userbot
 ```
 
-`requirements.txt` не требует `TgCrypto`: Pyrogram работает без ускорителя,
-поэтому ошибка сборки нативного модуля больше не блокирует запуск на ARM.
-Основной Docker-образ подходит для ПК и сохраняет изображения в OLX-отчётах.
-Если Docker всё же нужен на Raspberry Pi, используйте облегчённый профиль без
-Chromium, ChromeDriver и `TgCrypto`:
+На ARM/Raspberry Pi OmniGet CLI не устанавливается, потому что upstream не
+публикует Linux ARM artifact. Downloader продолжает работать через yt-dlp.
+Профиль `docker-compose.pi.yml` также отключает браузерный режим OLX.
 
-```bash
-cp .env.example .env
-# заполните .env
-docker compose -f docker-compose.yml -f docker-compose.pi.yml up -d --build
-docker compose -f docker-compose.yml -f docker-compose.pi.yml logs -f userbot
-```
+OmniGet 0.9.2 скачивается на этапе сборки с закреплённого release URL и
+проверяется по SHA-256; бинарный файл в репозитории не хранится.
 
-Первую авторизацию Telegram выполните в интерактивном режиме, убрав `-d`.
-Профиль Raspberry Pi задаёт `OLX_SEARCH_MODE=http`: поиск создаёт тот же Excel,
-но без встроенных фотографий. Это экономит память и не требует Selenium,
-Playwright, Chromium или драйвера браузера.
-
-`TgCrypto` ускоряет криптографию Pyrogram, но не обязателен для его работы.
-Если на конкретном компьютере или Pi он устанавливается без ошибок, его можно
-добавить отдельно: `pip install -r requirements-accelerated.txt`.
-
-### Режимы поиска OLX
-
-- `OLX_SEARCH_MODE=auto` — значение по умолчанию на ПК: сначала Selenium с
-  фото, а при сбое браузера или пустом браузерном отчёте — HTTP-поиск без фото.
-- `OLX_SEARCH_MODE=browser` — только Selenium; полезно, если HTTP-запросы к
-  OLX ограничены и нужен отчёт с фотографиями.
-- `OLX_SEARCH_MODE=http` — только лёгкий HTTP-поиск без браузера и без фото;
-  рекомендован для Raspberry Pi.
-
-OLX может ограничить HTTP-запросы или изменить разметку сайта. В таком случае
-бот не упадёт, а вернёт обычное сообщение, что объявлений не найдено; логи
-покажут причину. Переключите режим на `browser`, если на устройстве есть
-исправный Chromium и ChromeDriver.
-
-### Восстановление после пропадания сети
-
-Клиент больше не завершает работу и не удаляет Telegram-сессию из-за временной
-ошибки сети. Он ждёт интернет без конечного таймаута, проверяя несколько
-доступных адресов. Интервал проверок постепенно растёт от 5 секунд максимум до
-10 минут, а после восстановления сети Pyrogram запускается заново.
-
-Параметры можно изменить в `.env`:
-
-```dotenv
-HEALTH_CHECK_INTERVAL=30
-MAX_RECONNECT_ATTEMPTS=10
-RECONNECT_DELAY=5
-OFFLINE_RETRY_MAX_INTERVAL=600
-RECONNECT_COOLDOWN=600
-```
-
-`OFFLINE_RETRY_MAX_INTERVAL` — максимальная пауза между проверками интернета,
-а `RECONNECT_COOLDOWN` — пауза между сериями попыток подключения к Telegram.
-Даже после неудачной серии монитор остаётся запущен и пробует снова.
-
-## Данные и результаты
+## Данные
 
 ```text
 data/
-├── sessions/        Telegram-сессии
-├── settings.json    настройки модели, голосов и Telegraph
-├── database.db      статьи локального веб-сервера
-├── files/           сохранённые результаты команд
-│   ├── audio/
-│   ├── downloads/
-│   ├── history/
-│   ├── images/
-│   └── olx/
-└── tmp/             краткоживущие рабочие файлы
+├── sessions/                 Telegram session files
+├── cookies/                  cookies.txt, только локально
+├── files/                    сохраняемые результаты других команд
+├── tmp/downloads/<job_id>/   временные загрузки `.dl`
+├── download_jobs.db          registry downloader jobs
+├── database.db               локальные статьи
+├── telegram_reader.db        индекс Reader API
+└── settings.json             выбранные модели и настройки
 ```
 
-По умолчанию файлы из `data/files/` остаются на диске после отправки в
-Telegram. Чтобы сделать запуск одноразовым и удалять их после отправки,
-укажите в `.env`:
+Все данные монтируются как `./data:/app/data`. Незавершённые интерактивные jobs
+живут до TTL. Начатые jobs после рестарта помечаются failed; временные каталоги
+очищаются при завершении каждой попытки.
 
-```dotenv
-KEEP_GENERATED_FILES=false
+## Telegram Reader API
+
+Reader использует уже запущенный Pyrogram client, не открывая session вторым
+процессом. Endpoint'ы: `/v1/status`, `/v1/telegram/unread`, private/channel
+search, context и двухфазные read prepare/confirm. API защищается Bearer token и
+опционально Cloudflare Access; параметры перечислены в `.env.example`, детали
+деплоя — в `deploy/README.md`.
+
+## Проверка и обслуживание
+
+```bash
+python -m unittest discover -s tests -v
+python -m compileall -q src tests
+python -m pip check
+docker compose config
+docker compose -f docker-compose.yml -f docker-compose.vps.yml config
 ```
 
-Старые `settings.json`, `database.db` и папка `sessions/` в корне проекта
-безопасно копируются в `data/` при первом запуске новой версии. После проверки
-можно удалить старые копии из корня.
+Статья открывается по `${MY_DOMAIN}/view/<id>`. `MY_DOMAIN` должен быть доступен
+из интернета, а reverse proxy — направлять запросы на локальный `WEB_PORT`.
 
-## Обслуживание и диагностика
+## Использованные технологии
 
-- Проверить зависимости: `python -m pip check`.
-- Проверить конфигурацию Docker: `docker compose config`.
-- Посмотреть логи: `docker compose logs -f userbot`.
-- OLX в `auto` использует headless Chromium и автоматически переключается на
-  HTTP при сбое браузера. Если сайт изменит разметку или ограничит запросы,
-  отчёт может оказаться пустым — это не ошибка Excel.
-- `MY_DOMAIN` должен быть доступен Telegram, если используются ссылки
-  Instant View; `localhost` подходит только для локального просмотра.
+- PyrogramMod / MTProto — userbot и нативные Rich Messages;
+- aiogram 3 — companion Bot API polling и callbacks;
+- Google Gen AI SDK — Gemini text, image, transcription и TTS;
+- yt-dlp + Deno + curl_cffi — metadata и основной downloader;
+- OmniGet CLI — дополнительный downloader/fallback;
+- ffmpeg/ffprobe — merge, audio conversion и media metadata;
+- FastAPI, Uvicorn, SQLite, Jinja2 и Python-Markdown — Reader API и статьи;
+- Yandex Music SDK, Selenium, BeautifulSoup, openpyxl и Pillow — остальные
+  существующие функции проекта.
 
-## Обновление зависимостей
+Полный список внешних компонентов и лицензий находится в
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
-Версии в `requirements.txt` намеренно закреплены, чтобы локальный запуск и
-Docker использовали один набор библиотек. Обновляйте их осознанно, затем
-проверьте `python -m pip check`, `python -m compileall src` и пересоберите
-образ командой `docker compose build --no-cache`.
+## Лицензия
 
-### Модели Gemini
-
-Основной Flash, Pro и Flash-Lite по умолчанию используют официальные aliases
-`gemini-flash-latest`, `gemini-pro-latest` и `gemini-flash-lite-latest`.
-Google автоматически переводит такие aliases на актуальный выпуск; при этом
-поведение и стоимость модели могут измениться после переключения. Для
-предсказуемой диагностики в меню оставлен закреплённый `gemini-3.8-flash`.
-Рабочая модель по умолчанию — экономичная `gemini-flash-lite-latest`; полный
-Flash с Google Search можно выбрать командой `.model 2`.
-
-Изображения создаёт `gemini-3.1-flash-image`, а быстрая озвучка использует
-`gemini-3.1-flash-tts-preview`. Любую модель можно временно переопределить
-через переменные `GEMINI_*_MODEL` из `.env.example`, не меняя код.
-
-## Telegram Reader API для Vex
-
-Reader встроен в тот же процесс Pyrogram и использует уже запущенный клиент — второй процесс session-файл не открывает. При старте и после переподключения он сверяет текущие личные диалоги, а перед каждым запросом непрочитанных заново получает точную Telegram-границу `read_inbox_max_id`.
-
-Основные endpoint'ы:
-
-- `GET /v1/status`;
-- `POST /v1/telegram/unread`;
-- `POST /v1/telegram/search/private`;
-- `POST /v1/telegram/search/channels`;
-- `POST /v1/telegram/context`;
-- `POST /v1/telegram/read/prepare`;
-- `POST /v1/telegram/read/confirm`.
-
-`new_only` показывает только реальные непрочитанные личные сообщения от пользователей, которые Vex ещё не доставил. Сначала создаётся временная reservation; `surfaced_at` устанавливается только после подтверждения успешной доставки OpenClaw. Это не изменяет Telegram read state. `all_unread` повторно показывает всё, что по-прежнему непрочитано в Telegram.
-
-Каналы никогда не попадают в непрочитанные и не индексируются фоном. Они читаются только явным поиском; рабочая область v1 ограничена уже подключёнными каналами. Установленный Pyrogram 2.0.106 ищет глобально только по чатам аккаунта и не предоставляет безопасный бесплатный поиск по всем публичным постам, поэтому `public_global` закрыт явной ошибкой `501` вместо ложного результата или расходования Stars. Семантическое ранжирование выполняет OpenClaw через настраиваемый embedding endpoint, а при его отсутствии сохраняется обычный lexical/fuzzy результат.
-
-Отметка прочитанным выполняется только в два шага: preview с короткоживущим токеном, затем отдельное подтверждение. Telegram отмечает прочитанными все сообщения диалога до подготовленного `max_message_id`.
-
-API закрыт приложенческим Bearer-токеном и, в production, Cloudflare Access service token. Значения задаются только через окружение. CORS не включён; размер запросов, лимиты выдачи и частота вызовов ограничены. Инструкция для вашего будущего ручного переноса находится в `deploy/README.md`.
+Собственный код проекта распространяется по MIT License — см. [`LICENSE`](LICENSE).
+Внешние программы и библиотеки сохраняют собственные лицензии. OmniGet
+распространяется по GPL-3.0; Docker-образ получает неизменённый официальный
+release artifact, а исходный код закреплённой версии доступен у upstream.

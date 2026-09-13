@@ -1,21 +1,36 @@
 import asyncio
 import os
+
+import uvicorn
 from pyrogram import Client, idle
-from pyrogram.errors import SessionPasswordNeeded, PasswordHashInvalid
+from pyrogram.errors import PasswordHashInvalid, SessionPasswordNeeded
+
 from src.config import (
-    API_ID, API_HASH, PHONES, SESSIONS_DIR, WEB_PORT, WEB_BIND_HOST, ensure_runtime_dirs,
-    HEALTH_CHECK_INTERVAL, MAX_RECONNECT_ATTEMPTS, RECONNECT_DELAY,
-    OFFLINE_RETRY_MAX_INTERVAL, RECONNECT_COOLDOWN,
+    API_HASH,
+    API_ID,
+    HEALTH_CHECK_INTERVAL,
+    MAX_RECONNECT_ATTEMPTS,
+    OFFLINE_RETRY_MAX_INTERVAL,
+    PHONES,
+    RECONNECT_COOLDOWN,
+    RECONNECT_DELAY,
+    SESSIONS_DIR,
+    WEB_BIND_HOST,
+    WEB_PORT,
+    ensure_runtime_dirs,
 )
+from src.downloader import get_downloader_runtime
 from src.services.auth_qr import login_via_qr
 from src.services.connection import (
-    check_internet, wait_for_internet, reconnect_client, check_client_health,
+    check_client_health,
+    check_internet,
+    reconnect_client,
+    wait_for_internet,
 )
 from src.telegram_reader import get_runtime as get_reader_runtime
-import uvicorn
-
 
 # ============== МОНИТОРИНГ СОЕДИНЕНИЯ ==============
+
 
 async def keep_alive_monitor(apps: list[Client], interval: int = 30, on_reconnect=None):
     """
@@ -65,7 +80,9 @@ async def keep_alive_monitor(apps: list[Client], interval: int = 30, on_reconnec
                         try:
                             await on_reconnect(app)
                         except Exception as error:
-                            print(f"⚠️ Telegram Reader catch-up не выполнен: {type(error).__name__}")
+                            print(
+                                f"⚠️ Telegram Reader catch-up не выполнен: {type(error).__name__}"
+                            )
                 else:
                     retry_after[app.name] = (
                         asyncio.get_running_loop().time() + RECONNECT_COOLDOWN
@@ -84,6 +101,7 @@ async def keep_alive_monitor(apps: list[Client], interval: int = 30, on_reconnec
 
 
 # ============== АВТОРИЗАЦИЯ ==============
+
 
 async def interactive_auth(app: Client):
     """
@@ -156,19 +174,20 @@ async def interactive_auth(app: Client):
             return False
 
         while True:
-            code = input(f"📩 Введите код: ").strip()
+            code = input("📩 Введите код: ").strip()
             try:
                 await app.sign_in(app.phone_number, sent.phone_code_hash, code)
                 break
             except SessionPasswordNeeded:
                 pw = input("🔑 2FA Пароль: ").strip()
                 try:
-                    await app.check_password(pw); break
+                    await app.check_password(pw)
+                    break
                 except PasswordHashInvalid:
                     print("❌ Неверный пароль.")
             except Exception as e:
-                print(f"❌ Ошибка: {type(e).__name__}");
-                await app.disconnect();
+                print(f"❌ Ошибка: {type(e).__name__}")
+                await app.disconnect()
                 return False
 
         print("✅ Вход по СМС успешен!")
@@ -187,10 +206,11 @@ async def interactive_auth(app: Client):
 
 # ============== WEB SERVER ==============
 
+
 async def start_web_server(server_holder: dict):
     """Запуск FastAPI сервера в фоне."""
     from src.web_server import app
-    
+
     # Внешний адрес MY_DOMAIN и локальный порт WEB_PORT настраиваются отдельно.
     port = WEB_PORT
 
@@ -203,12 +223,14 @@ async def start_web_server(server_holder: dict):
 
 # ============== MAIN ==============
 
+
 async def main():
     # ЭТАП 0: ЗАПУСК ВЕБ-СЕРВЕРА
     web_task = None
     web_server = {}
 
     reader_runtime = get_reader_runtime()
+    downloader_runtime = get_downloader_runtime()
 
     try:
         ensure_runtime_dirs()
@@ -222,12 +244,14 @@ async def main():
         # Инициализация клиентов
         apps = [
             Client(
-                name=os.path.join(SESSIONS_DIR, p.strip().replace('+', '')),
+                name=os.path.join(SESSIONS_DIR, p.strip().replace("+", "")),
                 api_id=API_ID,
                 api_hash=API_HASH,
                 phone_number=p.strip(),
-                plugins=dict(root="src.handlers")
-            ) for p in PHONES if p.strip()
+                plugins=dict(root="src.handlers"),
+            )
+            for p in PHONES
+            if p.strip()
         ]
 
         if not apps:
@@ -274,18 +298,25 @@ async def main():
         if not started_apps:
             print("⚠️ Клиенты пока не запустились; монитор продолжит попытки.")
 
+        await downloader_runtime.start(started_apps)
+
+        async def register_reconnected(app: Client) -> None:
+            await downloader_runtime.register_client(app)
+            if reader_runtime.settings.enabled:
+                await reader_runtime.register_client(app)
+
         print("\n🤖 Бот запущен. Нажмите Ctrl+C для остановки.")
-            
+
         # Мониторим все авторизованные клиенты, включая не запустившиеся из-за
         # временной сетевой ошибки на старте.
         monitor_task = asyncio.create_task(
             keep_alive_monitor(
                 valid_apps,
                 interval=HEALTH_CHECK_INTERVAL,
-                on_reconnect=reader_runtime.register_client if reader_runtime.settings.enabled else None,
+                on_reconnect=register_reconnected,
             )
         )
-            
+
         try:
             await idle()  # Это главный цикл Pyrogram для сообщений
         finally:
@@ -295,8 +326,11 @@ async def main():
             except asyncio.CancelledError:
                 pass
 
+            await downloader_runtime.stop()
+
             for app in valid_apps:
                 try:
+                    downloader_runtime.unregister_client(app)
                     await reader_runtime.unregister_client(app)
                     if app.is_initialized:
                         await app.stop()

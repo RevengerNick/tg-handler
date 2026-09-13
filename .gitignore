@@ -13,6 +13,9 @@ settings.json
 .claude/*
 /sessions/
 /data/
+/cookies/
+cookies.txt
+*.cookies.txt
 /temp_olx/
 /temp_img_*.png
 /olx_*.xlsx
