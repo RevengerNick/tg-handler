@@ -2,7 +2,7 @@
 Pyrogram==2.0.106
 # TgCrypto is optional. Pyrogram works without it, which keeps ARM/Raspberry Pi
 # installation reliable; see requirements-accelerated.txt for the opt-in extra.
-google-genai==1.73.1
+google-genai==2.23.0
 python-dotenv==1.2.2
 aiohttp==3.13.5
 yt-dlp==2026.3.17

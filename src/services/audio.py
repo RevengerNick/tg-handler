@@ -183,8 +183,9 @@ async def generate_multispeaker_tts(script_text, custom_cast=None):
                 )
             )
 
-        # 3. Конфиг
-        model_id = "gemini-2.5-flash-preview-tts"
+        # 3. Используем выбранную пользователем актуальную TTS-модель.
+        t_key = SETTINGS.get("tts_model_key", "2")
+        model_id = AVAILABLE_TTS_MODELS.get(t_key, AVAILABLE_TTS_MODELS["2"])
 
         config = types.GenerateContentConfig(
             response_modalities=["AUDIO"],

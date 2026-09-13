@@ -106,7 +106,26 @@ if OLX_SEARCH_MODE not in {"auto", "browser", "http"}:
     print("Invalid OLX_SEARCH_MODE value; using auto.")
     OLX_SEARCH_MODE = "auto"
 
-IMAGEN_MODEL = "imagen-3.0-generate-001"
+GEMINI_FLASH_MODEL = os.getenv("GEMINI_FLASH_MODEL", "gemini-flash-latest").strip()
+GEMINI_FLASH_PINNED_MODEL = os.getenv(
+    "GEMINI_FLASH_PINNED_MODEL", "gemini-3.8-flash"
+).strip()
+GEMINI_PRO_MODEL = os.getenv("GEMINI_PRO_MODEL", "gemini-pro-latest").strip()
+GEMINI_FLASH_LITE_MODEL = os.getenv(
+    "GEMINI_FLASH_LITE_MODEL", "gemini-flash-lite-latest"
+).strip()
+GEMINI_IMAGE_MODEL = os.getenv(
+    "GEMINI_IMAGE_MODEL", "gemini-3.1-flash-image"
+).strip()
+GEMINI_TRANSCRIPTION_MODEL = os.getenv(
+    "GEMINI_TRANSCRIPTION_MODEL", GEMINI_FLASH_LITE_MODEL
+).strip()
+GEMINI_TTS_FLASH_MODEL = os.getenv(
+    "GEMINI_TTS_FLASH_MODEL", "gemini-3.1-flash-tts-preview"
+).strip()
+GEMINI_TTS_PRO_MODEL = os.getenv(
+    "GEMINI_TTS_PRO_MODEL", "gemini-2.5-pro-preview-tts"
+).strip()
 
 STOP_WORDS = {
     'и', 'в', 'во', 'не', 'на', 'я', 'с', 'со', 'он', 'она', 'оно', 'они', 'а', 'но',
@@ -168,15 +187,15 @@ AVAILABLE_VOICES = {
 }
 
 AVAILABLE_MODELS = {
-    "1": {"id": "gemini-2.5-flash", "name": "⚡️ 2.5 Flash (Google Search)", "search": True},
-    "2": {"id": "gemini-3-flash-preview", "name": "⚡️ 3 Flash (Google Search)", "search": True},
-    "3": {"id": "gemini-2.5-pro", "name": "🧠 2.5 Pro (Thinking)", "search": False},
-    "4": {"id": "gemini-2.0-flash", "name": "🚀 2.0 Flash (Fast)", "search": False},
+    "1": {"id": GEMINI_FLASH_LITE_MODEL, "name": "🚀 Flash-Lite Latest (Auto)", "search": False},
+    "2": {"id": GEMINI_FLASH_MODEL, "name": "⚡️ Flash Latest (Auto, Google Search)", "search": True},
+    "3": {"id": GEMINI_FLASH_PINNED_MODEL, "name": "⚡️ 3.8 Flash (Pinned, Google Search)", "search": True},
+    "4": {"id": GEMINI_PRO_MODEL, "name": "🧠 Pro Latest (Auto)", "search": False},
 }
 
 AVAILABLE_TTS_MODELS = {
-    "1": "gemini-2.5-pro-preview-tts",
-    "2": "gemini-2.5-flash-preview-tts",
+    "1": GEMINI_TTS_PRO_MODEL,
+    "2": GEMINI_TTS_FLASH_MODEL,
 }
 
 VOICE_NAMES_LIST = [
@@ -206,7 +225,7 @@ HELP_DICT = {
         "`.podcast` / `.подкаст` [тема]": "Создать и озвучить подкаст.",
     },
     "🎨 **Генерация:**": {
-        "`.img` / `.имг` / `.imagen` [промпт]": "Создать изображение через Google Imagen.",
+        "`.img` / `.имг` / `.imagen` [промпт]": "Создать изображение через Gemini Image.",
         "`.flux` / `.флакс` / `.арт` [промпт]": "Создать изображение через Pollinations.",
     },
     "🎵 **Музыка и тексты:**": {

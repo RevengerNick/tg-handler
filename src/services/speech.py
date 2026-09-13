@@ -1,7 +1,7 @@
 import json
 import asyncio
-import os
 from google.genai import types
+from src.config import GEMINI_TRANSCRIPTION_MODEL
 from src.services.ai_core import get_ai_client, rotate_key_and_retry
 from src.services.files import output_path
 
@@ -67,7 +67,7 @@ async def transcribe_via_gemini(file_path):
 
         # 4. Генерация
         response = await client.aio.models.generate_content(
-            model="gemini-2.5-flash",
+            model=GEMINI_TRANSCRIPTION_MODEL,
             contents=[
                 types.Content(
                     parts=[

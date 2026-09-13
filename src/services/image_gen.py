@@ -1,17 +1,14 @@
-import asyncio
-import os
-import time
+import base64
 import random
 import aiohttp
 from src.services.ai_core import get_ai_client, rotate_key_and_retry
-from src.config import IMAGEN_MODEL
+from src.config import GEMINI_IMAGE_MODEL
 from src.services.files import output_path
-from google.genai import types
 
 
 async def generate_imagen(prompt):
     """
-    Генерация через Google Imagen 3.
+    Генерация через актуальную Gemini Flash Image (Nano Banana).
     Использует ротацию ключей.
     """
 
@@ -19,30 +16,27 @@ async def generate_imagen(prompt):
         client = get_ai_client()
         if not client: return None, "No Client"
 
-        # Конфиг для генерации
-        config = types.GenerateImagesConfig(
-            number_of_images=1,
-            aspect_ratio="1:1",  # Можно менять на 16:9
-            output_mime_type="image/jpeg"
-        )
-
         try:
-            response = await client.aio.models.generate_images(
-                model=IMAGEN_MODEL,
-                prompt=prompt,
-                config=config
+            response = await client.aio.interactions.create(
+                model=GEMINI_IMAGE_MODEL,
+                input=prompt,
+                response_format={
+                    "type": "image",
+                    "mime_type": "image/jpeg",
+                    "aspect_ratio": "1:1",
+                    "image_size": "1K",
+                },
             )
 
-            # Сохраняем результат
-            if response.generated_images:
-                image_data = response.generated_images[0].image.image_bytes
-                filename = output_path("images", "imagen.jpg")
+            image = response.output_image
+            if image and image.data:
+                image_data = base64.b64decode(image.data)
+                filename = output_path("images", "gemini_image.jpg")
 
                 with open(filename, "wb") as f:
                     f.write(image_data)
                 return filename, None
-            else:
-                return None, "No images returned (Safety filter?)"
+            return None, "No images returned (Safety filter?)"
 
         except Exception as e:
             # Часто бывает ошибка 400 из-за Safety Filters (NSFW и т.д.)
@@ -51,7 +45,7 @@ async def generate_imagen(prompt):
             raise e  # Пробрасываем для ротации, если это ошибка сети/лимитов
 
     try:
-        # Используем ротацию ключей, так как лимиты на Imagen строгие
+        # Лимиты медиа-моделей строже, поэтому ротация ключей остаётся.
         return await rotate_key_and_retry(_worker)
     except Exception as e:
         return None, str(e)

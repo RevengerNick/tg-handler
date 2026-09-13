@@ -12,7 +12,7 @@
 - ответы Gemini в обычном и диалоговом режиме;
 - TTS, диалоги и подкасты;
 - распознавание голосовых и видео;
-- изображения через Imagen и Flux;
+- изображения через Gemini Flash Image (Nano Banana) и Flux;
 - скачивание видео, аудио и треков Яндекс.Музыки;
 - отчёты OLX в Excel, в том числе с фильтрами;
 - статистика чата, курсы валют и локальные web-статьи.
@@ -193,6 +193,20 @@ KEEP_GENERATED_FILES=false
 Docker использовали один набор библиотек. Обновляйте их осознанно, затем
 проверьте `python -m pip check`, `python -m compileall src` и пересоберите
 образ командой `docker compose build --no-cache`.
+
+### Модели Gemini
+
+Основной Flash, Pro и Flash-Lite по умолчанию используют официальные aliases
+`gemini-flash-latest`, `gemini-pro-latest` и `gemini-flash-lite-latest`.
+Google автоматически переводит такие aliases на актуальный выпуск; при этом
+поведение и стоимость модели могут измениться после переключения. Для
+предсказуемой диагностики в меню оставлен закреплённый `gemini-3.8-flash`.
+Рабочая модель по умолчанию — экономичная `gemini-flash-lite-latest`; полный
+Flash с Google Search можно выбрать командой `.model 2`.
+
+Изображения создаёт `gemini-3.1-flash-image`, а быстрая озвучка использует
+`gemini-3.1-flash-tts-preview`. Любую модель можно временно переопределить
+через переменные `GEMINI_*_MODEL` из `.env.example`, не меняя код.
 
 ## Telegram Reader API для Vex
 

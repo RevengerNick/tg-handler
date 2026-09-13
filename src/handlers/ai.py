@@ -425,7 +425,7 @@ async def imagen_handler(client, message):
         if not prompt:
             return await edit_or_reply(message, "🎨 Введите описание картинки (на английском лучше).")
 
-        status = await edit_or_reply(message, "🎨 **Imagen 3** рисует...")
+        status = await edit_or_reply(message, "🎨 **Gemini Image** рисует...")
 
         # Запускаем генерацию
         file_path, error = await generate_imagen(prompt)
@@ -435,13 +435,13 @@ async def imagen_handler(client, message):
             await client.send_photo(
                 message.chat.id,
                 photo=file_path,
-                caption=f"🎨 **Imagen 3**\n`{prompt}`"
+                caption=f"🎨 **Gemini Image**\n`{prompt}`"
             )
             remove_generated_file(file_path)
             if message.outgoing: await message.delete()
             if status != message: await status.delete()
         else:
-            await status.edit(f"❌ Ошибка Imagen: {error}")
+            await status.edit(f"❌ Ошибка Gemini Image: {error}")
 
     except Exception as e:
         await edit_or_reply(message, f"Err: {e}")
