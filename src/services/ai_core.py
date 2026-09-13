@@ -7,6 +7,8 @@ from src.state import SETTINGS, ASYNC_CHAT_SESSIONS
 current_key_index = 0
 _active_client = None
 
+_ROTATABLE_API_CODES = {401, 403, 429, 500, 502, 503, 504}
+
 
 def init_client():
     """Инициализирует клиента с текущим ключом из списка"""
@@ -20,9 +22,14 @@ def init_client():
     key = GEMINI_KEYS[current_key_index]
 
     try:
-        _active_client = genai.Client(api_key=key)
+        new_client = genai.Client(api_key=key)
+        # AsyncChat keeps a reference to the client that created it. Sessions
+        # therefore cannot be reused after an API-key/client rotation.
+        ASYNC_CHAT_SESSIONS.clear()
+        _active_client = new_client
         # print(f"🔑 Init Client with Key #{current_key_index + 1}")
     except Exception as e:
+        _active_client = None
         print(f"❌ Error init client (Key #{current_key_index}): {e}")
 
     return _active_client
@@ -58,10 +65,12 @@ async def rotate_key_and_retry(func, *args, **kwargs):
             return await func(*args, **kwargs)
 
         except errors.APIError as e:
-            # Ловим ошибки лимитов (429) или перегрузки (503)
-            # Код 400 (Bad Request) ротировать нет смысла, это ошибка в запросе
-            if e.code in [429, 503] or "429" in str(e) or "quota" in str(e).lower():
-                print(f"⚠️ Key #{current_key_index} Limit Hit ({e.message}...). Rotating...")
+            # Rotate only for key-, quota-, and transient server failures.
+            # Request/programming errors must surface immediately instead of
+            # being reported as if every configured API key were exhausted.
+            if e.code in _ROTATABLE_API_CODES:
+                message = getattr(e, "message", str(e))
+                print(f"⚠️ Key #{current_key_index} API Error ({message}...). Rotating...")
 
                 # 2. Меняем индекс по кругу
                 # Если ключей 3: 0 -> 1 -> 2 -> 0 ...
@@ -74,15 +83,7 @@ async def rotate_key_and_retry(func, *args, **kwargs):
                 # Идем на следующий круг цикла (повторная попытка с новым ключом)
                 continue
             else:
-                # Если ошибка не связана с лимитами (например, неверный промпт), просто падаем
-                raise e
-        except Exception as e:
-            # Другие ошибки (сеть и т.д.) тоже можно попробовать обойти сменой ключа/переподключением
-            print(f"⚠️ Network/Unknown Error on Key #{current_key_index}: {e}")
-            current_key_index = (current_key_index + 1) % max_retries
-            init_client()
-            last_error = e
-            continue
+                raise
 
     # Если цикл закончился, а мы так и не вернули результат
     raise Exception(f"All {max_retries} API keys exhausted. Last error: {last_error}")
@@ -104,7 +105,7 @@ async def get_gemini_stream(chat_id, contents, is_chat=False):
         # Режим чата или одиночный
         if is_chat:
             if chat_id not in ASYNC_CHAT_SESSIONS:
-                ASYNC_CHAT_SESSIONS[chat_id] = await client.aio.chats.create(
+                ASYNC_CHAT_SESSIONS[chat_id] = client.aio.chats.create(
                     model=model_id, config=config
                 )
             chat = ASYNC_CHAT_SESSIONS[chat_id]
@@ -139,11 +140,21 @@ def get_ai_config(chat_id=None):
         if local_sys:
             sys_instr = f"{sys_instr}\n\n[Context: {local_sys}]".strip()
 
-    tools = [types.Tool(google_search=types.GoogleSearch())] if model_info["search"] else []
+    tools = (
+        [types.Tool(google_search=types.GoogleSearch())]
+        if model_info["search"]
+        else None
+    )
 
     config = types.GenerateContentConfig(
         system_instruction=sys_instr if sys_instr else None,
-        tools=tools
+        tools=tools,
+        # These commands use only server-side built-in tools (Google Search),
+        # never local Python callables. Disable SDK-side AFC so one-shot model
+        # calls follow the google-genai 2.x async contract without warnings.
+        automatic_function_calling=types.AutomaticFunctionCallingConfig(
+            disable=True
+        ),
     )
     return model_info["id"], config
 
@@ -201,7 +212,7 @@ async def ask_gemini_chat(chat_id, contents):
         # Проще всего: если ловим ошибку авторизации внутри чата, удалять сессию и создавать новую.
 
         if chat_id not in ASYNC_CHAT_SESSIONS:
-            ASYNC_CHAT_SESSIONS[chat_id] = await client.aio.chats.create(
+            ASYNC_CHAT_SESSIONS[chat_id] = client.aio.chats.create(
                 model=model_id, config=config
             )
 

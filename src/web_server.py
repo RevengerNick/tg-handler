@@ -65,11 +65,14 @@ async def view_article(request: Request, article_id: str):
     html_body = markdown.markdown(article['content'], extensions=['fenced_code', 'tables', 'nl2br'])
     description = re.sub(r'[#*`_]', '', article['content'])[:150] + "..."
 
-    return templates.TemplateResponse("article.html", {
-        "request": request,
-        "title": article['title'],
-        "content": html_body,
-        "date": article['date'],
-        "description": description,
-        "article_id": article_id
-    })
+    return templates.TemplateResponse(
+        request=request,
+        name="article.html",
+        context={
+            "title": article['title'],
+            "content": html_body,
+            "date": article['date'],
+            "description": description,
+            "article_id": article_id,
+        },
+    )
