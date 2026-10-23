@@ -28,6 +28,7 @@ from src.services.connection import (
     wait_for_internet,
 )
 from src.telegram_reader import get_runtime as get_reader_runtime
+from src.finance_bridge.runtime import get_runtime as get_finance_runtime
 
 # ============== МОНИТОРИНГ СОЕДИНЕНИЯ ==============
 
@@ -231,6 +232,19 @@ async def main():
 
     reader_runtime = get_reader_runtime()
     downloader_runtime = get_downloader_runtime()
+    # Configuration errors in an optional integration must not stop account management.
+    finance_runtime = None
+    try:
+        finance_runtime = get_finance_runtime()
+    except Exception as exc:
+        print(f'⚠️ Finance bridge configuration failed: {type(exc).__name__}')
+
+    async def register_finance(app, self_id=None):
+        if finance_runtime is not None:
+            try:
+                await finance_runtime.register_client(app, self_id=self_id)
+            except Exception as exc:
+                print(f'⚠️ Finance bridge registration failed: {type(exc).__name__}')
 
     try:
         ensure_runtime_dirs()
@@ -290,6 +304,7 @@ async def main():
                 me = await app.get_me()
                 print(f"🟢 {me.first_name} онлайн и готов к работе!")
                 started_apps.append(app)
+                await register_finance(app, self_id=int(me.id))
                 if reader_runtime.settings.enabled:
                     await reader_runtime.register_client(app, self_id=int(me.id))
             except Exception as e:
@@ -301,6 +316,7 @@ async def main():
         await downloader_runtime.start(started_apps)
 
         async def register_reconnected(app: Client) -> None:
+            await register_finance(app)
             await downloader_runtime.register_client(app)
             if reader_runtime.settings.enabled:
                 await reader_runtime.register_client(app)
@@ -327,6 +343,8 @@ async def main():
                 pass
 
             await downloader_runtime.stop()
+            if finance_runtime is not None:
+                await finance_runtime.stop()
 
             for app in valid_apps:
                 try:

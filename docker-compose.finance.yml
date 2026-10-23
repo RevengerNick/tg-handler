@@ -1,0 +1,11 @@
+# Enable with COMPOSE_FILE=docker-compose.yml:docker-compose.finance.yml in private .env.
+services:
+  userbot:
+    networks:
+      - default
+      - finance
+
+networks:
+  finance:
+    external: true
+    name: finance-bot_default
