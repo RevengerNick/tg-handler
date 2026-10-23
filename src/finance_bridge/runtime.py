@@ -11,7 +11,7 @@ from .config import BridgeSettings, HUMO_PEER_ID
 from .outbox import Outbox
 
 log = logging.getLogger(__name__)
-ACK_STATUSES = {'created', 'matched', 'duplicate', 'unrecognized', 'needs_account', 'before_opening'}
+ACK_STATUSES = {'created', 'matched', 'duplicate', 'unrecognized', 'needs_account', 'needs_review', 'before_opening'}
 
 
 def notification(message, owner_id):
