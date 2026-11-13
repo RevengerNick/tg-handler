@@ -23,6 +23,7 @@
 - yt-dlp как основной backend, OmniGet CLI как native fallback, ffmpeg для
   merge/postprocessing;
 - cookies для авторизованного доступа без сохранения секретов в Git;
+- `.tag` / `.tagall` — упоминания участников группы с необязательным текстом;
 - Excel-отчёты OLX, статистика чатов, валюты и Telegram Reader HTTP API.
 
 ## Как устроен downloader
