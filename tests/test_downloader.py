@@ -1,17 +1,27 @@
+import asyncio
 import tempfile
 import unittest
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+from aiogram.exceptions import TelegramBadRequest
+from aiogram.methods import SendMessage
 
 from src.downloader.backends.omniget import parse_omniget_json
 from src.downloader.callbacks import CallbackCodec
+from src.downloader.config import DownloaderSettings
 from src.downloader.cookies import CookieStore
 from src.downloader.files import cleanup_job_directory, find_downloaded_paths
 from src.downloader.formats import format_selector, normalize_yt_dlp_metadata
-from src.downloader.models import DownloadJob, FormatChoice, JobStatus
+from src.downloader.models import DownloadJob, FormatChoice, JobStatus, MediaMetadata
 from src.downloader.platforms import cookie_file_for, detect_platform, extract_url
 from src.downloader.registry import JobRegistry
+from src.downloader.runtime import DownloaderRuntime
 from src.downloader.service import DownloadService
+from src.handlers.downloads import parse_download_request
 
 
 class DownloaderPureTests(unittest.TestCase):
@@ -97,6 +107,66 @@ class DownloaderPureTests(unittest.TestCase):
         service = DownloadService(object(), Fallback(), Path("/tmp/download-test"))
         self.assertTrue(service.should_fallback(Exception("network"), "Instagram"))
         self.assertFalse(service.should_fallback(Exception("network"), "YouTube"))
+
+
+class DownloadSubmissionTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        directory = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.runtime = DownloaderRuntime(
+            replace(DownloaderSettings.from_env(), database_path=directory / "jobs.db")
+        )
+        await self.runtime.registry.initialize()
+        self.client = SimpleNamespace(
+            get_me=AsyncMock(return_value=SimpleNamespace(id=101)),
+            edit_message_text=AsyncMock(),
+        )
+        self.runtime.clients[101] = self.client
+        self.message = SimpleNamespace(
+            command=["dl"], chat=SimpleNamespace(id=102), id=103, reply_to_message=None
+        )
+
+    async def test_plain_yandex_music_command_queues_audio_without_control(self):
+        self.message.text = (
+            ".dl https://music.yandex.uz/album/123/track/456"
+            "?utm_source=web&utm_medium=copy_link"
+        )
+        self.runtime._execute = AsyncMock()
+        url, choice = parse_download_request(self.message)
+        self.assertIsNone(choice)
+        job = await self.runtime.submit(self.client, self.message, url, choice)
+        self.assertIsNotNone(job)
+        await asyncio.gather(*self.runtime.tasks)
+        self.runtime._execute.assert_awaited_once_with(job)
+        stored = await self.runtime.registry.get(job.id)
+        self.assertEqual(
+            (stored.platform, stored.selected_format), ("Yandex Music", "audio")
+        )
+
+    async def test_missing_companion_chat_marks_interactive_job_failed(self):
+        url = "https://youtu.be/example"
+        send_job = AsyncMock(
+            side_effect=TelegramBadRequest(
+                method=SendMessage(chat_id=1, text="example"),
+                message="Bad Request: chat not found",
+            )
+        )
+        self.runtime.control = SimpleNamespace(send_job=send_job)
+        self.runtime.service.analyze = AsyncMock(
+            return_value=MediaMetadata(
+                url=url,
+                platform="YouTube",
+                title="Example",
+                available_formats=(FormatChoice("720", "720p"),),
+            )
+        )
+
+        result = await self.runtime.submit(self.client, self.message, url)
+
+        self.assertIsNone(result)
+        job = send_job.await_args.args[0]
+        stored = await self.runtime.registry.get(job.id)
+        self.assertEqual(stored.status, JobStatus.FAILED)
+        self.assertIn("/start", self.client.edit_message_text.await_args.args[2])
 
 
 class RegistryTests(unittest.IsolatedAsyncioTestCase):

@@ -7,7 +7,11 @@ import re
 import time
 from datetime import datetime, timedelta, timezone
 
-from aiogram.exceptions import TelegramAPIError, TelegramForbiddenError
+from aiogram.exceptions import (
+    TelegramAPIError,
+    TelegramBadRequest,
+    TelegramForbiddenError,
+)
 from aiogram.types import CallbackQuery
 from pyrogram import Client
 
@@ -118,6 +122,9 @@ class DownloaderRuntime:
         self, client: Client, message, url: str, choice: str | None = None
     ) -> DownloadJob | None:
         url = validate_url(url)
+        platform = detect_platform(url)
+        if choice is None and platform == "Yandex Music":
+            choice = "audio"
         me = await client.get_me()
         now = datetime.now(timezone.utc)
         job = DownloadJob(
@@ -129,7 +136,7 @@ class DownloaderRuntime:
             reply_to_message_id=(
                 int(message.reply_to_message.id) if message.reply_to_message else None
             ),
-            platform=detect_platform(url),
+            platform=platform,
             status=JobStatus.PENDING,
             created_at=now,
             expires_at=now + timedelta(seconds=self.settings.job_ttl_seconds),
@@ -169,16 +176,27 @@ class DownloaderRuntime:
             await self.registry.set_control_message(job.id, message_id)
             await self._edit_source(job, source_status("waiting"))
             return refreshed
-        except TelegramForbiddenError:
+        except TelegramAPIError as error:
+            chat_unavailable = isinstance(error, TelegramForbiddenError) or (
+                isinstance(error, TelegramBadRequest)
+                and "chat not found" in error.message.lower()
+            )
             await self.registry.transition(
                 job.id,
                 [JobStatus.PENDING, JobStatus.WAITING_QUALITY],
                 JobStatus.FAILED,
-                error="Control user has not started the companion bot",
+                error="Control chat unavailable"
+                if chat_unavailable
+                else type(error).__name__,
             )
-            await self._edit_source(
-                job, "❌ Сначала отправьте `/start` служебному downloader-боту."
-            )
+            if chat_unavailable:
+                text = "❌ Служебный бот не может открыть личный чат. Отправьте ему `/start` или используйте `.dlo URL`."
+            else:
+                logger.warning(
+                    "Download control message failed: %s", type(error).__name__
+                )
+                text = "❌ Не удалось отправить кнопки выбора качества. Используйте `.dlo URL`."
+            await self._edit_source(job, text)
         except DownloaderError as error:
             await self.registry.transition(
                 job.id, [JobStatus.PENDING], JobStatus.FAILED, error=str(error)
@@ -188,7 +206,7 @@ class DownloaderRuntime:
             logger.exception("Download metadata failed for job %s", job.id)
             await self.registry.transition(
                 job.id,
-                [JobStatus.PENDING],
+                [JobStatus.PENDING, JobStatus.WAITING_QUALITY],
                 JobStatus.FAILED,
                 error=type(error).__name__,
             )
