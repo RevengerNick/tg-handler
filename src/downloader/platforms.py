@@ -58,7 +58,10 @@ def detect_platform(url: str) -> str:
         return "TikTok"
     if is_domain("reddit.com") or host == "redd.it":
         return "Reddit"
-    if is_domain("music.yandex.ru") or is_domain("music.yandex.com"):
+    if any(
+        is_domain(domain)
+        for domain in ("music.yandex.ru", "music.yandex.com", "music.yandex.uz")
+    ):
         return "Yandex Music"
     return "Web"
 

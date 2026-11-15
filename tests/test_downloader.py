@@ -23,6 +23,13 @@ class DownloaderPureTests(unittest.TestCase):
         self.assertEqual("Instagram", detect_platform("https://www.instagram.com/p/1"))
         self.assertEqual("Web", detect_platform("https://evilinstagram.com/p/1"))
 
+    def test_yandex_music_domains(self):
+        for domain in ("music.yandex.ru", "music.yandex.com", "music.yandex.uz"):
+            with self.subTest(domain=domain):
+                url = f"https://{domain}/album/123/track/456"
+                self.assertEqual("Yandex Music", detect_platform(url))
+        self.assertEqual("Web", detect_platform("https://music.yandex.uz.example.org/"))
+
     def test_format_normalization_and_selector(self):
         metadata = normalize_yt_dlp_metadata(
             {
