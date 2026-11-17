@@ -79,6 +79,7 @@ async def tag_all_handler(client: Client, message: types.Message) -> None:
     arguments = message.text.split(maxsplit=1)
     note = arguments[1].strip() if len(arguments) > 1 else ""
     chat_id = message.chat.id
+    account_id = client.me.id
     seen: set[int] = set()
     users: list[types.User] = []
     sent = 0
@@ -99,7 +100,7 @@ async def tag_all_handler(client: Client, message: types.Message) -> None:
             ):
                 continue
             seen.add(user.id)
-            if not (user.is_bot or user.is_deleted):
+            if user.id != account_id and not (user.is_bot or user.is_deleted):
                 users.append(user)
 
         if not users:

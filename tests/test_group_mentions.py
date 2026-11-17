@@ -54,9 +54,7 @@ class GroupMentionTests(unittest.IsolatedAsyncioTestCase):
             [entities[0].offset for _, entities in messages], [0] * len(messages)
         )
 
-    async def test_handler_preserves_topic_and_skips_duplicate_bot_and_deleted_users(
-        self,
-    ):
+    async def test_handler_preserves_topic_and_skips_excluded_users(self):
         async def members(chat_id):
             self.assertEqual(chat_id, -100123)
             for user in (
@@ -65,11 +63,14 @@ class GroupMentionTests(unittest.IsolatedAsyncioTestCase):
                 types.User(id=2, is_bot=True),
                 types.User(id=3, is_deleted=True),
                 types.User(id=4, first_name="Аня"),
+                types.User(id=5, username="sender"),
             ):
                 yield types.ChatMember(user=user, status=enums.ChatMemberStatus.MEMBER)
 
-        client = Mock(get_chat_members=members, send_message=AsyncMock())
-        message = self.message(".tagall Ребят, важно -", count=4)
+        client = Mock(
+            me=types.User(id=5), get_chat_members=members, send_message=AsyncMock()
+        )
+        message = self.message(".tagall Ребят, важно -", count=5)
         await tag_all_handler(client, message)
 
         self.assertEqual(
@@ -81,6 +82,7 @@ class GroupMentionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs["message_thread_id"], 14)
         self.assertEqual(kwargs["reply_to_message_id"], 18)
         message.delete.assert_awaited_once()
+        message.edit_text.assert_not_awaited()
 
     async def test_hidden_member_list_reports_error(self):
         async def members(_):
